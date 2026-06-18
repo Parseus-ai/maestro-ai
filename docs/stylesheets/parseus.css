@@ -161,10 +161,32 @@
   content: none;
 }
 
-/* External links (absolute http/https) get a trailing ↗ in Persian
-   blue, sized to the link text. Relative internal links never match
-   this selector, so they stay arrow-free. inline-block detaches the
-   arrow from the link's underline so the glyph itself isn't underlined. */
+/* Standard mkdocs convention: the ¶ permalink is hidden at rest and
+   appears only when its heading is hovered (or the anchor is focused for
+   keyboard users). Without this it sits permanently next to the title —
+   including beside the "A product of Parseus AI" byline — reading as a
+   stray pilcrow. */
+.md-typeset .headerlink {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.md-typeset h1:hover .headerlink,
+.md-typeset h2:hover .headerlink,
+.md-typeset h3:hover .headerlink,
+.md-typeset h4:hover .headerlink,
+.md-typeset h5:hover .headerlink,
+.md-typeset h6:hover .headerlink,
+.md-typeset .headerlink:focus {
+  opacity: 1;
+}
+
+/* External links (absolute http/https) get a trailing ↗, sized to the
+   link text. Relative internal links never match this selector, so they
+   stay arrow-free. inline-block detaches the arrow from the link's
+   underline so the glyph itself isn't underlined. The arrow is a neutral
+   functional indicator, NOT brand-colored — it uses the default text
+   foreground (near-black in light mode, light in the slate scheme) so it
+   stays legible in both themes and doesn't clash with the blue wordmark. */
 .md-typeset a[href^="http://"]::after,
 .md-typeset a[href^="https://"]::after {
   content: "↗";
@@ -172,5 +194,5 @@
   margin-left: 0.15em;
   font-size: 0.85em;
   line-height: 1;
-  color: var(--md-primary-fg-color);
+  color: var(--md-default-fg-color);
 }
