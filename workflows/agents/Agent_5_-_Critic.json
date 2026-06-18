@@ -1,0 +1,344 @@
+{
+  "updatedAt": "2026-06-11T02:27:59.345Z",
+  "createdAt": "2026-05-13T20:14:42.487Z",
+  "id": "x9W3vg9NJxZsJZ21",
+  "name": "Agent 5 - Critic",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        -256
+      ],
+      "id": "c163e4bd-f466-49cd-99bd-1cc77eab67e4",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Agent 5: format output as standard envelope\n// Mode: Run Once for All Items\n// Reads from Call LLM's normalized response.\n// Propagates structured error from Call LLM on failure.\n// Output shape: flat issues[] with a per-issue severity field (aligned with Agents 3/4).\n// Counts (critical/major/minor/total) are derived in-node from issues[].severity.\n\nconst callLLM = $('Call LLM').first().json;\n\n// Empty result shape returned on any failure (must match the success shape).\nconst emptyResult = {\n  summary: '',\n  issues: [],\n  preserve: [],\n  total_issues: 0,\n  critical_count: 0,\n  major_count: 0,\n  minor_count: 0\n};\n\n// Call LLM failed â€” propagate error\nif (callLLM.success === false) {\n  console.log(`[Agent 5] LLM call failed: ${callLLM.error?.category || 'unknown'} â€” ${callLLM.error?.message || 'no message'}`);\n  return {\n    json: {\n      success: false,\n      ...emptyResult,\n      tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n      cached_input_tokens: callLLM.cached_input_tokens || 0,\n      cache_write_tokens: callLLM.cache_write_tokens || 0,\n      model_used: callLLM.model_used || 'unknown',\n      provider_used: callLLM.provider_used || 'unknown',\n      errors: [...(callLLM.errors || [])],\n      error: callLLM.error || {\n        category: 'unknown',\n        type: 'unknown',\n        message: 'Call LLM returned success: false with no error object',\n        provider: callLLM.provider_used || 'unknown',\n        model: callLLM.model_used || 'unknown'\n      }\n    }\n  };\n}\n\n// Normal path: parse JSON from content\nconst response = $input.item.json;\nconst text = response.text || response.content || response.response || response.output_text || response.completion || '';\n\nconst rawText = String(text);\nlet parsed = null;\nconst parseErrors = [];\n\nconst tryParse = (str) => {\n  try { return JSON.parse(str); } catch (e) { return null; }\n};\n\n// Strategy 1: strip markdown fences, parse direct\nlet cleaned = rawText.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\nparsed = tryParse(cleaned);\n\n// Strategy 2: extract from first { to last } (handles trailing commentary)\nif (!parsed) {\n  const firstBrace = cleaned.indexOf('{');\n  const lastBrace = cleaned.lastIndexOf('}');\n  if (firstBrace !== -1 && lastBrace > firstBrace) {\n    parsed = tryParse(cleaned.substring(firstBrace, lastBrace + 1));\n  }\n}\n\nif (!text) {\n  parseErrors.push(`No text returned from Call LLM. Keys: ${Object.keys(response).join(', ')}`);\n  console.log(`[Agent 5] ${parseErrors[parseErrors.length - 1]}`);\n} else if (!parsed) {\n  parseErrors.push(`Could not parse JSON. Start: ${rawText.substring(0, 300)}`);\n  console.log(`[Agent 5] JSON parse failed. Raw content (first 500 chars):\\n${rawText.slice(0, 500)}`);\n}\n\nconst success = parsed !== null;\nconst error = success ? null : {\n  category: 'output_quality',\n  type: 'json_parse_failure',\n  message: parseErrors.join('; ') || 'Could not parse critic JSON',\n  provider: callLLM.provider_used || 'unknown',\n  model: callLLM.model_used || 'unknown'\n};\n\n// Normalize issues to a flat array; derive counts from per-issue severity.\nconst rawIssues = Array.isArray(parsed?.issues) ? parsed.issues : [];\nconst normSeverity = (s) => String(s || '').toLowerCase().trim();\nconst issues = rawIssues.map((it) => ({\n  section: it?.section || '',\n  issue: it?.issue || '',\n  suggestion: it?.suggestion || '',\n  severity: normSeverity(it?.severity)\n}));\n\nconst criticalCount = issues.filter((i) => i.severity === 'critical').length;\nconst majorCount = issues.filter((i) => i.severity === 'major').length;\nconst minorCount = issues.filter((i) => i.severity === 'minor').length;\nconst total = issues.length;\n\nconsole.log(`[Agent 5] Total issues: ${total} (critical: ${criticalCount}, major: ${majorCount}, minor: ${minorCount})`);\nconsole.log(`[Agent 5] Tokens: ${callLLM.input_tokens || 0}in + ${callLLM.output_tokens || 0}out + ${callLLM.cached_input_tokens || 0}cached + ${callLLM.cache_write_tokens || 0}cache_write`);\n\nreturn {\n  json: {\n    success,\n    summary: parsed?.summary || '',\n    issues,\n    preserve: parsed?.preserve || [],\n    total_issues: total,\n    critical_count: criticalCount,\n    major_count: majorCount,\n    minor_count: minorCount,\n    tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n    cached_input_tokens: callLLM.cached_input_tokens || 0,\n    cache_write_tokens: callLLM.cache_write_tokens || 0,\n    model_used: callLLM.model_used || 'unknown',\n    provider_used: callLLM.provider_used || 'unknown',\n    errors: parseErrors,\n    error\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        -240
+      ],
+      "id": "9758a9b6-c19b-476c-b0e8-b7c44ccf7c99",
+      "name": "Format output"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Set Inputs â€” Agent 5: Critic\n// Critic plays the recruiter/HR role: sees ONLY the resume + JD. No master_doc.\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return '';\n  if (typeof val !== 'string') return val;\n  let cleaned = val;\n  while (cleaned.length > 0 && cleaned.charAt(0) === '=') {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\nconst descriptionHtml = strip(trigger.description_html);\nconst resumeMarkdown = strip(trigger.resume_markdown);\n\n// verifier may arrive as Object or JSON-string\nlet verifier = trigger.verifier;\nif (typeof verifier === 'string') {\n  let raw = verifier;\n  while (raw.length > 0 && raw.charAt(0) === '=') raw = raw.substring(1);\n  try {\n    verifier = JSON.parse(raw);\n  } catch (e) {\n    console.log('[Agent 5 Set Inputs] verifier not parseable JSON, defaulting to empty');\n    verifier = {};\n  }\n}\nverifier = verifier || {};\nif (verifier.result && typeof verifier.result === 'object') {\n  verifier = verifier.result;\n}\n\nconst provider = strip(config.provider_critic);\nif (!provider) {\n  throw new Error('[Agent 5] config.provider_critic is required. Set it in your config sheet (anthropic | openai | gemini).');\n}\n\nconst model = strip(config.model_critic);\nif (!model) {\n  throw new Error('[Agent 5] config.model_critic is required. Set it in your config sheet.');\n}\n\nconst maxTokens = Number(config.max_tokens_critic);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error('[Agent 5] config.max_tokens_critic is required and must be a number.');\n}\n\nconsole.log(`[Agent 5 Set Inputs] resume_markdown: ${resumeMarkdown.length} chars, verifier: verdict=${verifier.verdict || 'unknown'}, ${(verifier.issues || []).length} issues, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    description_html: descriptionHtml,\n    resume_markdown: resumeMarkdown,\n    verifier,\n    provider,\n    model,\n    max_tokens: maxTokens\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -240
+      ],
+      "id": "20228cd5-cb41-45de-a3e4-87dbc634a8a5",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "mxnzrmY5JgwI2DNY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/mxnzrmY5JgwI2DNY",
+          "cachedResultName": "Call LLM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider": "=={{ $json.provider }}",
+            "model": "=={{ $json.model }}",
+            "system": "=={{ $json.system }}",
+            "user_message": "=={{ $json.user_message }}",
+            "max_tokens": "=={{ Number($json.max_tokens) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "model",
+              "displayName": "model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "system",
+              "displayName": "system",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "user_message",
+              "displayName": "user_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "max_tokens",
+              "displayName": "max_tokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        192,
+        -240
+      ],
+      "id": "c353571d-2150-46cb-9b57-2ec8291c94ae",
+      "name": "Call LLM",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build Prompt â€” Agent 5: Critic\n// Persona (recruiter/HR screener), issue categories, and severity calibration\n// live in system_prompt (prompts sheet). The Critic sees ONLY the resume + JD â€”\n// it does NOT receive the master career document. Its job is to assess fit the\n// way a recruiter would: judge the resume as written against the JD, flag gaps\n// and weaknesses. It names WHAT is missing/weak relative to the JD; it does NOT\n// prescribe which specific facts to add (that's the refiner's job, grounded in\n// the master). This node injects the OUTPUT CONTRACT (JSON shape the Refiner\n// consumes) and per-job inputs.\n// Mode: Run Once for Each Item\n\nconst input = $input.item.json;\nconst descriptionHtml = input.description_html || '';\nconst resumeMarkdown = input.resume_markdown || '';\nconst systemPromptFromDoc = input.system_prompt || '';\n\n// Validation\nif (!systemPromptFromDoc || systemPromptFromDoc.length < 100) {\n  throw new Error(`[Agent 5] system_prompt missing or too short (${systemPromptFromDoc.length} chars). Check Prompt Loader output and orchestrator mapping.`);\n}\nif (!resumeMarkdown || resumeMarkdown.length < 30) {\n  throw new Error(`[Agent 5] resume_markdown missing or too short (${resumeMarkdown.length} chars)`);\n}\nif (!descriptionHtml || descriptionHtml.length < 30) {\n  throw new Error(`[Agent 5] description_html missing or too short (${descriptionHtml.length} chars)`);\n}\n\nconsole.log(`[Build Prompt] resume: ${resumeMarkdown.length} chars, JD: ${descriptionHtml.length} chars`);\nconsole.log(`[Build Prompt] systemPromptFromDoc: ${systemPromptFromDoc.length} chars`);\n\n// Pipeline-level output contract â€” JSON shape the Refiner (Agent 6) depends on.\nOUTPUT_CONTRACT = `# OUTPUT CONTRACT (set by pipeline, do not override)\n\nOutput EXACTLY this JSON. No preamble, no markdown fences, no commentary outside JSON:\n\n{\n  \"summary\": \"<1-2 sentence top-level assessment>\",\n  \"issues\": [\n    {\n      \"section\": \"<section identifier>\",\n      \"issue\": \"<one-sentence description of the problem, judged against the JD>\",\n      \"suggestion\": \"<concrete direction for improvement: what the resume should strengthen or surface to better match the JD. Describe WHAT is needed, not invented specifics â€” do not fabricate facts, metrics, or experience the resume does not show>\",\n      \"severity\": \"critical\" or \"major\" or \"minor\"\n    }\n  ],\n  \"preserve\": [\"<strength 1>\", \"<strength 2>\"]\n}\n\nEvery issue object must have section, issue, suggestion, and severity. The severity field is REQUIRED on every issue and must be exactly one of: \"critical\", \"major\", \"minor\".\n- critical: actively undermines the application â€” buries a key qualification the resume does show, off-target summary, or a missing must-have the JD requires.\n- major: a clear missed opportunity â€” unquantified impact, weak verbs on important bullets, suboptimal ordering, or a JD priority the resume underplays.\n- minor: polish â€” phrasing, parallelism, tightening.\n\nYou are assessing the resume as a recruiter would: you see only the resume and the JD. Judge fit, positioning, and clarity against the JD. Flag where the resume fails to make the case the JD asks for. Do NOT invent or prescribe specific facts, metrics, or experience â€” describe what is missing or weak; surfacing real content to fix it is handled downstream.\n\nThe issues array may be empty if there are no issues. List issues in severity order: all critical first, then major, then minor. The preserve array must contain 2-4 strengths that should not be touched.`;\n\nconst system = systemPromptFromDoc + '\\n\\n' + OUTPUT_CONTRACT;\n\nconst userMessage = `Critique the resume below against the target JD, as a recruiter screening for fit.\n\n# FULL JOB DESCRIPTION\n${descriptionHtml}\n\n# CANDIDATE'S TAILORED RESUME\n${resumeMarkdown}`;\n\nconsole.log(`[Build Prompt] Final system: ${system.length} chars, user: ${userMessage.length} chars`);\n\nreturn {\n  json: {\n    ...input,\n    system,\n    user_message: userMessage,\n    prompt_chars: system.length + userMessage.length\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -240
+      ],
+      "id": "e7f74845-c85c-483d-a9db-5e7d6841c366",
+      "name": "Build Prompt"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "31b3d6b2-633e-4b74-9d24-62afc0bbfc3f",
+              "leftValue": "={{ $json.cascade_error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -416,
+        -256
+      ],
+      "id": "45f76f73-dfe6-42ef-8e89-39b1565883f3",
+      "name": "Cascade"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Cascade Output â€” Agent 5\n// Mode: Run Once for All Items\n// Fires when upstream agent failed. Passes upstream error through unchanged.\n// Flat output shape matches Agent 5 Format Output for downstream consumer (Agent 6) compatibility.\n\nconst trigger = $('Trigger').first().json;\nconst upstreamError = trigger.cascade_error || {};\n\nconsole.log(`[Agent 5] CASCADE â€” skipping due to ${upstreamError.source_agent || 'upstream'}: ${upstreamError.category || 'unknown'}`);\n\nreturn {\n  json: {\n    success: false,\n    cascaded: true,\n    overall_assessment: '',\n    critical_issues: [],\n    major_issues: [],\n    minor_issues: [],\n    preserve: [],\n    total_issues: 0,\n    critical_count: 0,\n    major_count: 0,\n    minor_count: 0,\n    tokens: { input: 0, output: 0 },\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: 'skipped',\n    provider_used: 'skipped',\n    errors: [`cascade: ${upstreamError.source_agent || 'upstream'}:${upstreamError.category || 'unknown'}`],\n    error: upstreamError\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        -416
+      ],
+      "id": "a7abd7fa-c807-4298-b4a8-3eb9d09563e0",
+      "name": "Build Cascade Output"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "description_html"
+            },
+            {
+              "name": "resume_markdown"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "system_prompt"
+            },
+            {
+              "name": "cascade_error",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -592,
+        -416
+      ],
+      "id": "22556601-b0e7-4d75-9ec7-ee8e9536c3fa",
+      "name": "Trigger"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Cascade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM": {
+      "main": [
+        [
+          {
+            "node": "Format output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cascade": {
+      "main": [
+        [
+          {
+            "node": "Build Cascade Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Cascade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "5d9da24f-c15d-4f97-b6fa-34223ed87d9f",
+  "activeVersionId": "5d9da24f-c15d-4f97-b6fa-34223ed87d9f",
+  "versionCounter": 116,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-13T20:14:42.491Z",
+      "createdAt": "2026-05-13T20:14:42.491Z",
+      "role": "workflow:owner",
+      "workflowId": "x9W3vg9NJxZsJZ21",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 5d9da24f",
+    "description": ""
+  }
+}

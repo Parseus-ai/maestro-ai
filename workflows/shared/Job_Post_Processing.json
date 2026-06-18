@@ -1,0 +1,186 @@
+{
+  "updatedAt": "2026-05-28T23:18:53.567Z",
+  "createdAt": "2026-05-15T21:20:35.638Z",
+  "id": "ev7TyCXQl8dz8fSx",
+  "name": "Job Post Processing",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        16
+      ],
+      "id": "d2e223cd-1c55-4ce1-9d9a-1cfd48a458d2",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "jobs",
+              "type": "array"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "existing_job_urls",
+              "type": "array"
+            },
+            {
+              "name": "existing_job_roles",
+              "type": "array"
+            },
+            {
+              "name": "watchlist",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -528,
+        -176
+      ],
+      "id": "3685d4dd-5d45-4bd7-ac71-a6ac34d349de",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerData = $('Trigger').first().json;\nconst jobs = Array.isArray(triggerData.jobs) ? triggerData.jobs : [];\n\nconst str = (v) => (v === undefined || v === null) ? '' : String(v).trim();\n\nconst toIsoDate = (v) => {\n  if (!v) return '';\n  const d = new Date(v);\n  return isNaN(d.getTime()) ? '' : d.toISOString();\n};\n\nconst toBool = (v) => {\n  if (v === true) return true;\n  if (v === false) return false;\n  const s = String(v || '').toLowerCase().trim();\n  return s === 'true' || s === 'yes' || s === '1';\n};\n\nconst stripHtml = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n\nconst normalized = jobs.map(job => {\n  const descHtml = str(job.description_html);\n  const description = str(job.description) || stripHtml(descHtml);\n  return {\n    company: str(job.company),\n    title: str(job.title),\n    url: str(job.url),\n    description_html: descHtml,\n    description: description,\n    location: str(job.location),\n    remote: toBool(job.remote),\n    salary_text: str(job.salary_text),\n    employment_type: str(job.employment_type).toUpperCase(),\n    source: str(job.source),\n    posted_at: toIsoDate(job.posted_at)\n  };\n});\n\nconsole.log(`[Normalize] Normalized ${normalized.length} jobs`);\n\nreturn normalized.map(j => ({ json: j }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        -96
+      ],
+      "id": "42498bce-9a62-43e2-8f3b-c70b8169a48e",
+      "name": "Normalize Jobs",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Trigger').first().json.config || {};\nconst jobs = $input.all().map(item => item.json);\n\nconst parseList = (val) => {\n  if (!val) return [];\n  return String(val).split(/[;,]/).map(s => s.trim().toLowerCase()).filter(Boolean);\n};\n\n// Canonical employment-type vocabulary. Sources emit different raw tokens:\n//   greenhouse: usually empty\n//   lever:      FULLTIMEEMPLOYEE / INTERNATIONALEOR / INTERNATIONALOFFICEENTITY / INTERN / CONTRACTOR\n//   ashby:      FULLTIME / PARTTIME / CONTRACT / INTERN / TEMPORARY\n//   jsearch:    FULLTIME / PARTTIME / CONTRACTOR / INTERN / TEMPORARY\n// Fold both the config tokens and each job's employment_type to canonical before\n// comparing. Unknown tokens return '' so the membership check skips them rather\n// than silently dropping the job â€” sources change their taxonomy without notice.\nconst canonicalizeEmployment = (raw) => {\n  const s = String(raw || '').toLowerCase().replace(/[\\s_-]/g, '');\n  if (!s) return '';\n  if (s === 'fulltime' || s === 'fulltimeemployee' || s === 'permanent') return 'full_time';\n  if (s === 'internationaleor' || s === 'internationalofficeentity') return 'full_time';\n  if (s === 'parttime') return 'part_time';\n  if (s === 'contract' || s === 'contractor' || s === 'contracttohire') return 'contract';\n  if (s === 'intern' || s === 'internship') return 'internship';\n  if (s === 'temporary' || s === 'temp') return 'temporary';\n  return ''; // unknown token â€” let the job through; do not silently drop\n};\n\nconst excludeCompanies = parseList(config.exclude_companies);\nconst employmentTypesConsidered = parseList(config.employment_type_considered).map(canonicalizeEmployment).filter(Boolean);\nconst freshnessHours = Number(config.search_window_hours) || 0;\n\nconst now = Date.now();\nconst freshnessMs = freshnessHours > 0 ? freshnessHours * 60 * 60 * 1000 : 0;\n\nconst dropped = {\n  company_excluded: 0,\n  too_old: 0,\n  employment_type_mismatch: 0\n};\nconst filtered = [];\n\nfor (const job of jobs) {\n  const company = String(job.company || '').toLowerCase().trim();\n  const postedAt = job.posted_at ? new Date(job.posted_at).getTime() : NaN;\n  const employmentType = canonicalizeEmployment(job.employment_type);\n\n  if (excludeCompanies.length && excludeCompanies.includes(company)) {\n    dropped.company_excluded++;\n    continue;\n  }\n\n  if (freshnessMs > 0 && !isNaN(postedAt) && (now - postedAt > freshnessMs)) {\n    dropped.too_old++;\n    continue;\n  }\n\n  if (employmentTypesConsidered.length && employmentType && !employmentTypesConsidered.includes(employmentType)) {\n    dropped.employment_type_mismatch++;\n    continue;\n  }\n\n  filtered.push(job);\n}\n\nconsole.log(`[Hard Filter] Input: ${jobs.length}, Output: ${filtered.length}`);\nconsole.log(`[Hard Filter] Dropped: ${JSON.stringify(dropped)}`);\n\nreturn filtered.map(j => ({ json: j }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        -96
+      ],
+      "id": "4bf236cd-54b2-47bb-a06d-646ee074c0f4",
+      "name": "Hard Filter",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerData = $('Trigger').first().json;\nconst existingUrls = Array.isArray(triggerData.existing_job_urls) ? triggerData.existing_job_urls : [];\nconst existingRoles = Array.isArray(triggerData.existing_job_roles) ? triggerData.existing_job_roles : [];\n\nconst items = $input.all();\n\nconst normalizeUrl = (url) => {\n  if (!url) return '';\n  return String(url).toLowerCase().replace(/\\/$/, '').trim();\n};\n\n// company || title || YYYY-MM-DD (date only; undated -> trailing empty slot).\n// MUST stay byte-identical to the same helper in Data Loader > Filter Jobs.\nconst roleKey = (company, title, postedAt) => {\n  const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();\n  const c = norm(company);\n  const t = norm(title);\n  if (!c || !t) return '';\n  let d = '';\n  const s = String(postedAt || '').trim();\n  if (s) {\n    const m = s.match(/^(\\d{4}-\\d{2}-\\d{2})/);\n    if (m) d = m[1];\n    else { const dt = new Date(s); d = isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10); }\n  }\n  return `${c}||${t}||${d}`;\n};\n\nconst existingSet = new Set(existingUrls.map(normalizeUrl).filter(Boolean));\nconst existingRoleSet = new Set(existingRoles.filter(Boolean));\nconst seenUrls = new Set();\nconst seenRoles = new Set();\n\nconst deduped = [];\nlet droppedExisting = 0;\nlet droppedRoleExisting = 0;\nlet droppedBatchDup = 0;\nlet droppedRoleDup = 0;\nlet noUrlKept = 0;\n\nfor (const item of items) {\n  const job = item.json;\n  const url = normalizeUrl(job.url);\n  const role = roleKey(job.company, job.title, job.posted_at);\n\n  // already in the database (cross-run, by URL)\n  if (url && existingSet.has(url)) {\n    droppedExisting++;\n    continue;\n  }\n\n  // same role already in the database (cross-run, by company+title+date)\n  if (role && existingRoleSet.has(role)) {\n    droppedRoleExisting++;\n    continue;\n  }\n\n  // same URL seen earlier in this batch\n  if (url && seenUrls.has(url)) {\n    droppedBatchDup++;\n    continue;\n  }\n\n  // same role seen earlier in this batch (multi-location collapse, same date)\n  if (role && seenRoles.has(role)) {\n    droppedRoleDup++;\n    continue;\n  }\n\n  if (url) seenUrls.add(url);\n  if (role) seenRoles.add(role);\n  if (!url) noUrlKept++;\n  deduped.push(item);\n}\n\nconsole.log(`[Dedup] Input: ${items.length}, Output: ${deduped.length}, Existing-URL: ${droppedExisting}, Existing-role: ${droppedRoleExisting}, Batch-URL: ${droppedBatchDup}, Batch-role: ${droppedRoleDup}, No-URL kept: ${noUrlKept}`);\n\nreturn deduped;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -96
+      ],
+      "id": "ebc2d73d-81ad-4d38-9c58-f0fd44146bd2",
+      "name": "Dedup",
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Normalize Jobs": {
+      "main": [
+        [
+          {
+            "node": "Hard Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hard Filter": {
+      "main": [
+        [
+          {
+            "node": "Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup": {
+      "main": [
+        []
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Normalize Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "b8fe803c-517f-4497-b2b3-a1872cd11412",
+  "activeVersionId": "b8fe803c-517f-4497-b2b3-a1872cd11412",
+  "versionCounter": 153,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-15T21:20:35.640Z",
+      "createdAt": "2026-05-15T21:20:35.640Z",
+      "role": "workflow:owner",
+      "workflowId": "ev7TyCXQl8dz8fSx",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version b8fe803c",
+    "description": ""
+  }
+}

@@ -1,0 +1,1020 @@
+{
+  "updatedAt": "2026-06-09T19:43:25.549Z",
+  "createdAt": "2026-05-14T03:09:25.265Z",
+  "id": "V7ZjwX3eJLRr0xHQ",
+  "name": "Application Recorder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build Job Folder â€” computes Drive folder name and filenames\n// Mode: Run Once for Each Item\nconst job = $('Set Inputs').first().json.job_result;\nconst config = $('Set Inputs').first().json.config;\nconst stripEquals = (val) =>\n  (typeof val === 'string' && val.startsWith('=')) ? val.substring(1) : val;\nconst company = job.job?.company || 'Unknown';\nconst title = job.job?.title || 'Untitled';\nconst today = new Date();\nconst year = today.getFullYear();\nconst dateStr = today.toISOString().split('T')[0];\n// Folder name is dated by the job's posted_at (fallback discovered_at, then today)\n// so reruns of the same job produce a STABLE folder name â€” prevents date-drift duplicates.\nconst toDateStr = (v) => {\n  if (!v) return '';\n  const s = String(v).trim();\n  if (!s) return '';\n  // Accept ISO timestamps and plain dates; take the YYYY-MM-DD portion.\n  const m = s.match(/^\\d{4}-\\d{2}-\\d{2}/);\n  if (m) return m[0];\n  const d = new Date(s);\n  return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];\n};\nconst postedDateStr =\n  toDateStr(job.job?.posted_at) ||\n  toDateStr(job.job?.discovered_at) ||\n  dateStr;\nif (!toDateStr(job.job?.posted_at) && !toDateStr(job.job?.discovered_at)) {\n  console.log(`[Build Job Folder] WARNING: no posted_at/discovered_at for \"${company} â€” ${title}\"; folder dated with today (${dateStr}) â€” folder name will not be stable across runs.`);\n}\nconst firstName = stripEquals(config.applicant_first_name) || 'Unknown';\nconst lastName = stripEquals(config.applicant_last_name) || 'Applicant';\nconst fullName = `${firstName} ${lastName}`;\n// Root folder now sourced from Data Loader (via Set Inputs), not config.drive_root_folder_id\nconst driveRootFolderId = stripEquals($('Set Inputs').first().json.root_folder_id);\nfunction sanitize(s) {\n  return String(s).replace(/[\\/\\\\:*?\"<>|]/g, '').replace(/\\s+/g, ' ').trim();\n}\nfunction truncateAtWord(s, maxLen) {\n  if (s.length <= maxLen) return s;\n  const cut = s.substring(0, maxLen).trim();\n  const lastSpace = cut.lastIndexOf(' ');\n  return (lastSpace > 15 ? cut.substring(0, lastSpace) : cut).trim();\n}\nconst safeCompany = sanitize(company);\nconst safeTitle = sanitize(title);\nconst shortTitle = truncateAtWord(safeTitle, 35);\nconst folderName = `${safeCompany} â€“ ${shortTitle} â€“ ${postedDateStr}`;\nconst filenames = {\n  resume: `${fullName}_Resume- ${safeTitle}-${year}`,\n  cover_letter: `${fullName}_Cover Letter- ${safeTitle}-${year}`,\n  job_description: `Job Description- ${safeTitle}-${safeCompany}-${dateStr}`,\n  assessment: `${fullName}_Assessment- ${safeTitle}-${year}`\n};\nconsole.log(`[Build Job Folder] Folder: ${folderName}`);\nreturn {\n  json: {\n    ...job,\n    folder_name: folderName,\n    filenames,\n    applicant: { first_name: firstName, last_name: lastName, full_name: fullName },\n    date: dateStr,\n    posted_date: postedDateStr,\n    resume_folder_url: job.job?.resume_folder_url || '',\n    year,\n    drive_root_folder_id: driveRootFolderId\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        -64
+      ],
+      "id": "b9fc6c2e-9acb-489b-b3d0-3e9c3666ba5e",
+      "name": "Build Job Folder"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build JD HTML â€” formats job description as styled HTML for archival\n// Mode: Run Once for Each Item\nconst job = $('Set Inputs').first().json.job_result;\nconst description = job.job?.description_html || '';\nconst company = job.job?.company || 'Unknown Company';\nconst title = job.job?.title || 'Unknown Role';\nconst url = job.job?.url || '';\nconst today = new Date().toISOString().split('T')[0];\nif (!description || description.length < 50) {\n  throw new Error('[Build JD HTML] No job description to format');\n}\nfunction cleanDescription(text) {\n  return text\n    .replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ')\n    .replace(/\\n{3,}/g, '\\n\\n').trim();\n}\nconst cleaned = cleanDescription(description);\nconst escaped = cleaned.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst paragraphs = escaped.split(/\\n\\n+/);\nconst bodyHTML = paragraphs.map(p => p.trim()).filter(p => p)\n  .map(p => '<p>' + p.replace(/\\n/g, '<br/>') + '</p>').join('\\n');\nconst fullHTML = `<!DOCTYPE html>\n<html><head><meta charset=\"UTF-8\"><title>${title} - ${company}</title>\n<style>\n@page { size: letter; margin: 0.7in; }\nbody { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #222; margin: 0; }\n.metadata { border-bottom: 1px solid #ccc; padding-bottom: 12px; margin-bottom: 20px; }\n.metadata h1 { font-size: 16pt; margin: 0 0 4px 0; color: #111; }\n.metadata .company { font-size: 12pt; color: #1a4d8f; font-weight: 600; margin: 0; }\n.metadata .meta-line { font-size: 9pt; color: #666; margin: 6px 0 0 0; }\n.metadata a { color: #1a4d8f; text-decoration: none; }\np { margin: 8px 0; }\n</style></head><body>\n<div class=\"metadata\">\n<h1>${title}</h1>\n<p class=\"company\">${company}</p>\n<p class=\"meta-line\">Archived: ${today} Â· <a href=\"${url}\">${url}</a></p>\n</div>\n${bodyHTML}\n</body></html>`;\nconsole.log(`[Build JD HTML] Generated ${fullHTML.length} chars HTML`);\nreturn { json: { ...job, jd_html: fullHTML } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        304
+      ],
+      "id": "1312fdcf-b101-423e-97f7-be6a9d6820c1",
+      "name": "Build JD HTML"
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('Build Job Folder').item.json.folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Merge').first().json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1392,
+        64
+      ],
+      "id": "40ccc069-fae4-4382-9914-0f2f6d952be2",
+      "name": "Create Drive Folder",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const job = $('Build JD HTML').item.json;\nconst filename = $('Build Job Folder').item.json.filenames.job_description;\n\nif (!job.jd_html) {\n  throw new Error('[Convert JD to Binary] No jd_html to convert');\n}\n\nconst NodeBuffer = globalThis['Buffer'];\n\nreturn {\n  json: job,\n  binary: {\n    data: {\n      data: NodeBuffer.from(job.jd_html).toString('base64'),\n      mimeType: 'text/html',\n      fileName: `${filename}.html`\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        304
+      ],
+      "id": "77f47489-5bd9-40f3-b46f-e8675e78a4fa",
+      "name": "Convert JD to Binary"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "=data",
+        "name": "={{ $('Build Job Folder').item.json.filenames.job_description }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Finalize Job Folder').item.json.job_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2512,
+        304
+      ],
+      "id": "0df385b6-9268-453f-aceb-a9903835d188",
+      "name": "Upload JD",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Recorder Sub-Workflow\n// Normalizes inputs from the orchestrator's Execute Workflow call.\nconst trigger = $input.first()?.json || {};\nfunction strip(val) {\n  if (val === null || val === undefined) return '';\n  if (typeof val !== 'string') return val;\n  let cleaned = val;\n  while (cleaned.length > 0 && cleaned.charAt(0) === '=') {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\nconst jobResult = trigger.job_result || {};\nconst config = trigger.config || {};\n// Validation\nif (!jobResult || typeof jobResult !== 'object' || !jobResult.job) {\n  throw new Error('[Recorder Set Inputs] job_result missing or invalid; expected an object with a `job` field');\n}\nif (!config || typeof config !== 'object') {\n  throw new Error('[Recorder Set Inputs] config missing or invalid');\n}\nconsole.log(`[Recorder Set Inputs] Job: ${jobResult.job?.company || 'unknown'} â€” ${jobResult.job?.title || 'unknown'}`);\nconsole.log(`[Recorder Set Inputs] config keys: ${Object.keys(config).length}`);\nreturn [{\n  json: {\n    job_result: jobResult,\n    config,\n    // Drive root folder now comes from Data Loader via the orchestrator, not config\n    root_folder_id: strip(trigger.root_folder_id)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        -64
+      ],
+      "id": "ff1b5b09-0285-4d18-8996-4e4c4fb766ba",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "={{ \"name = '\" + $('Build Job Folder').first().json.year + \"' and '\" + $('Build Job Folder').first().json.drive_root_folder_id + \"' in parents and trashed = false\" }}",
+        "limit": 1,
+        "filter": {},
+        "options": {
+          "fields": [
+            "id",
+            "name",
+            "mimeType"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        48,
+        -64
+      ],
+      "id": "d0344e7b-6142-46d1-8d57-09783b835a2e",
+      "name": "Search Year Folder",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a23e8507-3d2e-402e-9abd-503a4d835e25",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        256,
+        -64
+      ],
+      "id": "27c2adfb-1bd2-4ea1-a02f-6b6945f5c120",
+      "name": "Year Folder Exists"
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('Build Job Folder').first().json.year }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Build Job Folder').first().json.drive_root_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        448,
+        64
+      ],
+      "id": "1fa731eb-fcbb-4519-ba58-e4ec5d658e06",
+      "name": "Create folder",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "jobs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "url"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2512,
+        656
+      ],
+      "id": "e47d5718-3dae-4114-a5f1-0f6a4e4e922a",
+      "name": "Mark Job Processed",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $('Build Assessment HTML').item.json;\nconst filename = $('Build Job Folder').item.json.filenames.assessment;\n\nif (!item.html) {\n  throw new Error('[Convert Assessment to Binary] No assessment HTML to convert');\n}\n\nconst NodeBuffer = globalThis['Buffer'];\n\nreturn {\n  json: item,\n  binary: {\n    data: {\n      data: NodeBuffer.from(item.html).toString('base64'),\n      mimeType: 'text/html',\n      fileName: `${filename}.html`\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        480
+      ],
+      "id": "b4be9280-0b02-46ec-9734-6c45754b76a3",
+      "name": "Convert Review to Binary"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "=data",
+        "name": "={{ $('Build Job Folder').item.json.filenames.assessment }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Finalize Job Folder').item.json.job_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2512,
+        480
+      ],
+      "id": "a2d51d61-593d-444e-aec1-076d4a78b23b",
+      "name": "Upload Review",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Set Inputs').first().json.job_result || {};\nconst folderId = $('Finalize Job Folder').item?.json?.job_folder_id || '';\nconst runId = data.application_run_id;\n\nconst job = data.job || {};\nconst scorer = data.scorer || {};\n\n// processed_status now comes from Log Job Result (per-job): 'done' | 'error' | 'insufficient_credit'.\n// For a credit-failed job we write 'insufficient_credit' (the frontend's re-queue signal) and\n// leave the application fields BLANK so the re-queued row starts clean â€” no stale folder URL,\n// score, or generated_at from a build that didn't complete.\nconst status = data.processed_status || 'done';\nconst isClean = status === 'done';\n\nreturn {\n  json: {\n    url: job.url,\n    application_run_id: runId,\n    processed_status: status,\n    prompt_warnings: '',\n    resume_folder_url: isClean && folderId ? `https://drive.google.com/drive/folders/${folderId}` : '',\n    resume_generated_at: isClean ? new Date().toISOString() : '',\n    resume_fit_score: isClean && (typeof scorer.overall_score === 'number') ? scorer.overall_score : '',\n    recommendation: isClean ? (scorer.recommendation || '') : '',\n    resume_score_rationale: isClean ? (scorer.rationale || scorer.score_rationale || '') : '',\n    application_tokens_in: data.application_tokens?.input || 0,\n    application_tokens_out: data.application_tokens?.output || 0,\n    application_cost_usd: data.application_cost ? Number(data.application_cost.toFixed(6)) : 0,\n    total_tokens_in: data.total_tokens?.input || 0,\n    total_tokens_out: data.total_tokens?.output || 0,\n    total_cost: data.total_cost ? Number(data.total_cost.toFixed(6)) : 0\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        656
+      ],
+      "id": "8929e102-44d6-4668-a3a5-c7df0874ddd7",
+      "name": "Build Application Row"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Set Inputs').first().json.job_result || {};\nconst job = data.job || {};\nconst verifier = data.verifier || {};\nconst coverVerifier = data.cover_verifier || {};\nconst critic = data.critic || {};\nconst scorer = data.scorer || {};\n\nconst esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\n\nconst list = (items, key) => {\n  if (!Array.isArray(items) || items.length === 0) return '<p><em>None.</em></p>';\n  return '<ul>' + items.map(it => {\n    const text = (typeof it === 'string') ? it : (it[key] || JSON.stringify(it));\n    return `<li>${esc(text)}</li>`;\n  }).join('') + '</ul>';\n};\n\nconst verifierSection = (v, title) => {\n  if (!v || Object.keys(v).length === 0) return `<h2>${title}</h2><p><em>No output.</em></p>`;\n  return `\n    <h2>${title}</h2>\n    <p><strong>Verdict:</strong> ${esc(v.verdict)}</p>\n    <p><strong>Summary:</strong> ${esc(v.summary)}</p>\n    <p><strong>Claims:</strong> ${v.claim_count || 0} total Â· ${v.supported_count || 0} supported Â· ${v.unsupported_count || 0} unsupported</p>\n    <h3>Issues</h3>\n    ${list(v.issues, 'description')}\n  `;\n};\n\nconst html = `<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Assessment</title></head><body style=\"font-family: Arial, sans-serif; max-width: 800px; line-height: 1.5;\">\n<h1>Assessment: ${esc(job.company)} â€” ${esc(job.title)}</h1>\n<p><a href=\"${esc(job.url)}\">${esc(job.url)}</a></p>\n\n<h2>Score</h2>\n<p><strong>Overall:</strong> ${scorer.overall_score ?? 'N/A'} Â· <strong>Recommendation:</strong> ${esc(scorer.recommendation)}</p>\n<p><strong>Rationale:</strong> ${esc(scorer.rationale || scorer.score_rationale)}</p>\n<h3>Strengths</h3>\n${list(scorer.strengths)}\n<h3>Gaps</h3>\n${list(scorer.gaps)}\n\n${verifierSection(verifier, 'Resume Verifier')}\n${verifierSection(coverVerifier, 'Cover Letter Verifier')}\n\n<h2>Critic</h2>\n<p>${esc(critic.overall_assessment)}</p>\n<p><strong>Issue counts:</strong> ${critic.total_issues || 0} total Â· ${critic.critical_count || 0} critical Â· ${critic.major_count || 0} major Â· ${critic.minor_count || 0} minor</p>\n<h3>Critical</h3>\n${list(critic.critical_issues, 'description')}\n<h3>Major</h3>\n${list(critic.major_issues, 'description')}\n<h3>Minor</h3>\n${list(critic.minor_issues, 'description')}\n<h3>Preserve (don't change)</h3>\n${list(critic.preserve)}\n</body></html>`;\n\nreturn {\n  json: {\n    file_name: 'Assessment.html',\n    html: html\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        480
+      ],
+      "id": "c64ae734-62f0-4bb2-a650-ab85c38faa3e",
+      "name": "Build Assessment HTML"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "job_result",
+              "type": "object"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "database_id"
+            },
+            {
+              "name": "root_folder_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -560,
+        -64
+      ],
+      "id": "b449d79e-66d9-4b39-9e17-c0900c68259d",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 5,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2912,
+        112
+      ],
+      "id": "5cf20357-188c-4482-b748-f47679d5a7af",
+      "name": "Sync Output"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "yNLUyYrlkEmrBY7T",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/yNLUyYrlkEmrBY7T",
+          "cachedResultName": "Resume Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $('Prepare Resume Recorder Input').first().json }}",
+            "config": "={{ $('Set Inputs').first().json.config }}",
+            "database_id": "={{ $('Trigger').first().json.database_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2512,
+        -64
+      ],
+      "id": "96ccbf69-b22f-4d86-ad56-6553e789f6ff",
+      "name": "Resume Recorder"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Resolve Job Folder Query â€” builds the name-search query for the job folder.\n// Dedup key = folder name (stable, posted-date based). A user rename intentionally\n// branches to a new folder. Searches for the job folder by name UNDER the year folder.\n// Mode: Run Once for Each Item\nconst folderName = $('Build Job Folder').first().json.folder_name;\nconst yearFolderId = $json.id; // year folder id, resolved by the upstream Merge\n\nif (!folderName) {\n  throw new Error('[Resolve Job Folder Query] folder_name missing from Build Job Folder');\n}\nif (!yearFolderId) {\n  throw new Error('[Resolve Job Folder Query] year folder id missing from Merge ($json.id)');\n}\n\n// Escape single quotes in the folder name for the Drive query (apostrophes in titles).\nconst safeName = String(folderName).replace(/'/g, \"\\\\'\");\nconst query = `name = '${safeName}' and '${yearFolderId}' in parents and trashed = false`;\n\nconsole.log(`[Resolve Job Folder Query] Searching for job folder: \"${folderName}\" under year ${yearFolderId}`);\n\nreturn {\n  json: {\n    job_folder_query: query,\n    job_folder_name: folderName,\n    year_folder_id: yearFolderId\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        -64
+      ],
+      "id": "676a62b2-a112-49be-8027-37a626504895",
+      "name": "Resolve Job Folder Query"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "={{ $json.job_folder_query }}",
+        "limit": 1,
+        "filter": {},
+        "options": {
+          "fields": [
+            "id",
+            "name",
+            "mimeType"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1008,
+        -64
+      ],
+      "id": "af00600c-cd80-4776-bb4d-094c335f1a3f",
+      "name": "Search Job Folder",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a23e8507-3d2e-402e-9abd-503a4d835e25",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1168,
+        -64
+      ],
+      "id": "5576ce30-2077-4db7-9e8b-ac799cb4be41",
+      "name": "Job Folder Exists"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Finalize Job Folder â€” emits the canonical job_folder_id regardless of source\n// (found-by-name reuse, or newly created). Downstream consumers read job_folder_id\n// and resume_folder_url from here, not from Create Drive Folder.\n// Mode: Run Once for Each Item\nconst item = $json || {};\n\n// Both Search Job Folder (found) and Create Drive Folder (created) emit { id, name, ... }.\nconst folderId = item.id;\n\nif (!folderId) {\n  throw new Error('[Finalize Job Folder] No folder id resolved â€” neither search nor create produced an id');\n}\n\nconst resumeFolderUrl = `https://drive.google.com/drive/folders/${folderId}`;\n\nconsole.log(`[Finalize Job Folder] job_folder_id=${folderId}`);\n\nreturn {\n  json: {\n    job_folder_id: folderId,\n    resume_folder_url: resumeFolderUrl\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -64
+      ],
+      "id": "d6329154-d1ec-4b05-a919-0bd480f5cd57",
+      "name": "Finalize Job Folder"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1616,
+        -64
+      ],
+      "id": "21b7a02e-35cc-4dcd-a2a0-cdfc9d2b2d70",
+      "name": "Merge Job Folder"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        640,
+        -64
+      ],
+      "id": "78ed5002-1f8b-4c4c-9aff-95493bf5f50f",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Recorder Input â€” adapts the ORIGINAL build's job_result into the shape\n// Resume Recorder expects (it was built for the refinement path). Maps the built\n// resume into jr.refiner.*, stamps a v1 'original' resume_row, aliases cost, and\n// stamps verifier.ran = true (the build path always runs the verifier; unlike the\n// refine path, there is no gating, so the build's verifier object carries no `ran`\n// flag and Build Resume Row would otherwise default ran_verifier to FALSE).\n// Refinement path builds its own resume_row + refiner, so this node is original-only.\nconst jr = $('Set Inputs').first().json.job_result || {};\n\nconst jobId = jr.job?.job_id || jr.job_id || '';\n\nconst adapted = {\n  ...jr,\n  // Resume Recorder reads the new markdown off jr.refiner.*\n  refiner: {\n    resume_markdown: jr.resume?.markdown || '',\n    tokens: jr.resume?.tokens || { input: 0, output: 0 }\n  },\n  // Build always runs the verifier; ensure ran:true so ran_verifier records TRUE.\n  verifier: {\n    ...(jr.verifier || {}),\n    ran: true\n  },\n  // v1 original row descriptor (refinement path supplies its own)\n  resume_row: {\n    version: 1,\n    source: 'original',\n    parent_resume_id: '',\n    refinement_instructions: '',\n    score_delta: null\n  },\n  // Resume Recorder reads jr.refinement_cost; original build calls it application_cost\n  refinement_cost: (typeof jr.application_cost === 'number') ? jr.application_cost : 0\n};\n\nreturn [{ json: adapted }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        -64
+      ],
+      "id": "9f0b16c5-7edf-46e1-9cf8-40e35b8138f1",
+      "name": "Prepare Resume Recorder Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Cover Recorder Input â€” adapts the build's job_result into the shape\n// Cover Letter Recorder expects. Today the cover letter is original-only (v1), so\n// this stamps a v1 'original' cover_letter_row descriptor and passes the native\n// cover_letter / cover_verifier objects through untouched. When cover-letter\n// refinement is added later, the refine path will supply its own cover_letter_row.\nconst jr = $('Set Inputs').first().json.job_result || {};\n\nconst adapted = {\n  ...jr,\n  cover_letter_row: {\n    version: 1,\n    source: 'original',\n    parent_cover_letter_id: '',\n    refinement_instructions: ''\n  }\n};\n\nreturn [{ json: adapted }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        128
+      ],
+      "id": "b8dd6a79-f334-4e44-9378-6cae7cdbe45a",
+      "name": "Prepare Cover Recorder Input"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Awz7xCEyHtRmkY8k",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Awz7xCEyHtRmkY8k",
+          "cachedResultName": "Cover Letter Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $('Prepare Cover Recorder Input').first().json }}",
+            "config": "={{ $('Set Inputs').first().json.config }}",
+            "database_id": "={{ $('Trigger').first().json.database_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2512,
+        128
+      ],
+      "id": "40df9e75-7767-4112-95c7-7e84adc268fc",
+      "name": "Cover Letter Recorder"
+    }
+  ],
+  "connections": {
+    "Build Job Folder": {
+      "main": [
+        [
+          {
+            "node": "Search Year Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build JD HTML": {
+      "main": [
+        [
+          {
+            "node": "Convert JD to Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Drive Folder": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Folder",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Convert JD to Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload JD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Job Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Year Folder": {
+      "main": [
+        [
+          {
+            "node": "Year Folder Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Year Folder Exists": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create folder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Upload JD": {
+      "main": [
+        [
+          {
+            "node": "Sync Output",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Mark Job Processed": {
+      "main": [
+        [
+          {
+            "node": "Sync Output",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Convert Review to Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Review": {
+      "main": [
+        [
+          {
+            "node": "Sync Output",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Build Application Row": {
+      "main": [
+        [
+          {
+            "node": "Mark Job Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Assessment HTML": {
+      "main": [
+        [
+          {
+            "node": "Convert Review to Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Output": {
+      "main": [
+        []
+      ]
+    },
+    "Resume Recorder": {
+      "main": [
+        [
+          {
+            "node": "Sync Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Job Folder Query": {
+      "main": [
+        [
+          {
+            "node": "Search Job Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Job Folder": {
+      "main": [
+        [
+          {
+            "node": "Job Folder Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Folder Exists": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Drive Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Job Folder": {
+      "main": [
+        [
+          {
+            "node": "Prepare Resume Recorder Input",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Cover Recorder Input",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build JD HTML",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Assessment HTML",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Application Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Job Folder": {
+      "main": [
+        [
+          {
+            "node": "Finalize Job Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Resolve Job Folder Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Resume Recorder Input": {
+      "main": [
+        [
+          {
+            "node": "Resume Recorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cover Recorder Input": {
+      "main": [
+        [
+          {
+            "node": "Cover Letter Recorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cover Letter Recorder": {
+      "main": [
+        [
+          {
+            "node": "Sync Output",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "55af30ee-1680-42cb-9161-cdf0e022fcc7",
+  "activeVersionId": "55af30ee-1680-42cb-9161-cdf0e022fcc7",
+  "versionCounter": 682,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-14T03:09:25.267Z",
+      "createdAt": "2026-05-14T03:09:25.267Z",
+      "role": "workflow:owner",
+      "workflowId": "V7ZjwX3eJLRr0xHQ",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 55af30ee",
+    "description": ""
+  }
+}

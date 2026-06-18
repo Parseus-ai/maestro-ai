@@ -1,0 +1,306 @@
+{
+  "updatedAt": "2026-05-29T00:26:54.030Z",
+  "createdAt": "2026-05-16T01:01:09.812Z",
+  "id": "mrj4z2FQx62Czp14",
+  "name": "JSearch Source",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -256,
+        0
+      ],
+      "id": "bf2d9567-4eb4-4709-a9c0-c7abf6af831d",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Trigger').first().json.config || {};\nconst orderRaw = cfg.discovery_fetcher_order || '';\nconst enabledSources = String(orderRaw)\n  .split(/[;,]/)\n  .map(s => s.trim().toLowerCase())\n  .filter(s => s.length > 0);\n\nif (!enabledSources.includes('jsearch')) {\n  console.log('[JSearch] Disabled via discovery_fetcher_order â€” skipping');\n  return [];\n}\nconst stripEquals = (v) => (typeof v === 'string' && v.startsWith('=')) ? v.substring(1) : v;\nconst config = $('Trigger').first().json.config || {};\n\nconst parseList = (val) => {\n  if (!val) return [];\n  return String(val).split(/[;,]/).map(s => s.trim()).filter(Boolean);\n};\n\nconst targetTitles = parseList(stripEquals(config.target_titles));\nif (targetTitles.length === 0) {\n  throw new Error('[JSearch Source] No target_titles configured');\n}\n\nconst country = String(stripEquals(config.target_country) || 'us').toLowerCase();\n\nconst windowHours = Number(stripEquals(config.search_window_hours)) || 0;\nlet datePosted = 'all';\nif (windowHours > 0 && windowHours <= 24) datePosted = 'today';\nelse if (windowHours > 0 && windowHours <= 72) datePosted = '3days';\nelse if (windowHours > 0 && windowHours <= 168) datePosted = 'week';\nelse if (windowHours > 0 && windowHours <= 720) datePosted = 'month';\n\nconst employmentTypeMap = {\n  full_time: 'FULLTIME',\n  part_time: 'PARTTIME',\n  contract: 'CONTRACTOR',\n  internship: 'INTERN'\n  // temporary not supported by JSearch â€” silently dropped\n};\nconst employmentTypes = parseList(stripEquals(config.employment_type_considered))\n  .map(t => employmentTypeMap[t])\n  .filter(Boolean);\n\n// Results-per-query â†’ JSearch pages. JSearch returns ~10 results/page.\n// pages = ceil(desired / 10), e.g. 84 -> 9. Default 10 results (1 page) if unset.\n// The page ceiling is config-driven (discovery_max_pages_per_query) so the user\n// can raise it after buying RapidAPI credits â€” no hardcoded limit.\nconst desiredResults = Number(stripEquals(config.discovery_max_results_per_query)) || 10;\nconst PAGE_SIZE = 10;\n\nlet pagesPerQuery = Math.ceil(desiredResults / PAGE_SIZE);\nif (!Number.isFinite(pagesPerQuery) || pagesPerQuery < 1) pagesPerQuery = 1;\n\nconst maxPagesRaw = Number(stripEquals(config.discovery_max_pages_per_query));\nconst maxPages = (Number.isFinite(maxPagesRaw) && maxPagesRaw >= 1) ? Math.floor(maxPagesRaw) : null;\nif (maxPages !== null && pagesPerQuery > maxPages) {\n  console.log(`[JSearch Build Queries] pages ${pagesPerQuery} clamped to ceiling ${maxPages} (discovery_max_pages_per_query)`);\n  pagesPerQuery = maxPages;\n}\n\n// num_pages pulls N pages in ONE API call per title (cheaper on the call budget).\nconst items = [];\nfor (const title of targetTitles) {\n  items.push({\n    json: {\n      query: title,\n      page: '1',\n      num_pages: String(pagesPerQuery),\n      country,\n      date_posted: datePosted,\n      employment_types: employmentTypes\n    }\n  });\n}\n\nconsole.log(`[JSearch Build Queries] ${targetTitles.length} titles Ã— ${pagesPerQuery} pages (desired ${desiredResults} results/query${maxPages !== null ? `, ceiling ${maxPages}` : ', no ceiling'}) = ${items.length} API calls, date_posted=${datePosted}`);\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "1aa11a04-4d82-4e7c-9745-81e0ae1cfe01",
+      "name": "Build Queries"
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "page",
+              "value": "={{ $json.page }}"
+            },
+            {
+              "name": "num_pages",
+              "value": "={{ $json.num_pages }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json.country}}"
+            },
+            {
+              "name": "date_posted",
+              "value": "={{ $json.date_posted }}"
+            },
+            {
+              "name": "employment_types",
+              "value": "={{ $json.employment_types }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-RapidAPI-Host",
+              "value": "jsearch.p.rapidapi.com"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        192,
+        0
+      ],
+      "id": "0c9c450e-8558-4a4d-bf1a-9c8b26126c48",
+      "name": "Jsearch API",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "XAlVKcWa8dho2rq4",
+          "name": "JSearch RapidAPI"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "run_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -272,
+        -192
+      ],
+      "id": "e1c118c4-0521-4e11-8121-5f15225a4e87",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSearch: parse + normalize. With \"Include Response Headers and Status\" ON,\n// the HTTP node wraps the payload as { body, headers, statusCode }.\nconst envelope = $input.item.json;\nconst response = (envelope && envelope.body) ? envelope.body : envelope; // tolerate both shapes\nconst data = Array.isArray(response.data) ? response.data : [];\nif (response.status && response.status !== 'OK') {\n  console.log(`[JSearch Parse] Non-OK status: ${response.status}, skipping`);\n  return [];\n}\nconst buildLocation = (job) => {\n  const parts = [];\n  if (job.job_city) parts.push(job.job_city);\n  if (job.job_state) parts.push(job.job_state);\n  if (job.job_country) parts.push(job.job_country);\n  if (parts.length === 0 && job.job_is_remote) return 'Remote';\n  return parts.join(', ');\n};\nconst buildSalaryText = (job) => {\n  const min = job.job_min_salary;\n  const max = job.job_max_salary;\n  const currency = job.job_salary_currency || 'USD';\n  const period = (job.job_salary_period || '').toLowerCase();\n  if (!min && !max) return '';\n  const fmt = (n) => n ? `${currency} ${Math.round(n).toLocaleString()}` : '';\n  if (min && max) return `${fmt(min)} - ${fmt(max)}${period ? ' / ' + period : ''}`;\n  return `${fmt(min || max)}${period ? ' / ' + period : ''}`;\n};\nconst normalized = data.map(job => ({\n  company: String(job.employer_name || '').trim(),\n  title: String(job.job_title || '').trim(),\n  url: String(job.job_apply_link || '').trim(),\n  description_html: '',\n  description: String(job.job_description || '').trim(),\n  location: buildLocation(job),\n  remote: job.job_is_remote === true,\n  salary_text: buildSalaryText(job),\n  employment_type: String((Array.isArray(job.job_employment_types) && job.job_employment_types[0]) || '').toUpperCase().trim(),\n  source: 'jsearch',\n  posted_at: job.job_posted_at_datetime_utc || ''\n}));\nconst queryName = response.parameters?.query || '?';\nconsole.log(`[JSearch Parse] Query \"${queryName}\": ${data.length} raw, ${normalized.length} normalized`);\nreturn normalized.map(j => ({ json: j }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -112
+      ],
+      "id": "7cf81171-f213-4412-aebd-7c0e63a30da0",
+      "name": "Parse and Normalize"
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSearch usage â€” read the gateway's actual remaining quota from response headers,\n// not an inferred call count. Runs on the API success output (one item per call);\n// each item carries headers from its own call. Quota is monotonic-decreasing within\n// a run, so the lowest remaining = the truest post-run figure. Reset seconds also\n// monotonically decreases during the run (countdown to window rollover), so MIN\n// is again the freshest snapshot.\nconst items = $input.all();\nconst runId = $('Trigger').first().json.run_id || '';\n\nconst headerVal = (h, name) => {\n  if (!h) return null;\n  // header keys can vary in case\n  const key = Object.keys(h).find(k => k.toLowerCase() === name.toLowerCase());\n  if (!key) return null;\n  const n = Number(h[key]);\n  return Number.isFinite(n) ? n : null;\n};\n\nlet remaining = null;\nlet limit = null;\nlet resetSeconds = null;\nlet successfulCalls = 0;\n\nfor (const it of items) {\n  const env = it.json || {};\n  const headers = env.headers || {};\n  const status = env.statusCode;\n  if (status === undefined || (status >= 200 && status < 300)) successfulCalls++;\n\n  const rem = headerVal(headers, 'x-ratelimit-requests-remaining');\n  if (rem !== null) remaining = (remaining === null) ? rem : Math.min(remaining, rem);\n\n  const lim = headerVal(headers, 'x-ratelimit-requests-limit');\n  if (lim !== null) limit = lim;\n\n  const rst = headerVal(headers, 'x-ratelimit-requests-reset');\n  if (rst !== null) resetSeconds = (resetSeconds === null) ? rst : Math.min(resetSeconds, rst);\n}\n\nconsole.log(`[JSearch Usage] run=${runId} successful_calls=${successfulCalls} quota_remaining=${remaining} quota_limit=${limit} quota_reset_seconds=${resetSeconds}`);\n\nreturn [{\n  json: {\n    _type: 'usage',\n    run_id: runId,\n    timestamp: new Date().toISOString(),\n    source: 'jsearch',\n    successful_calls: successfulCalls,\n    quota_remaining: remaining,       // ground truth from gateway header; null if header absent\n    quota_limit: limit,\n    quota_reset_seconds: resetSeconds // seconds until quota window rollover; null if header absent\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -304
+      ],
+      "id": "a4e8c765-4d29-42ca-bcc4-507574203ef3",
+      "name": "Track Usage"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = $('Trigger').first().json.run_id || '';\nconst errPayload = $input.first().json || {};\nconst errObj = errPayload.error || {};\n\n// Original query that failed â€” paired-item access to Build Queries input\nlet query = '';\ntry {\n  const q = $('Build Queries').item.json || {};\n  query = String(q.query || '');\n} catch (e) {\n  query = '';\n}\n\nconst statusCode = String(\n  errObj.httpCode ||\n  errObj.status ||\n  errObj.cause?.response?.status ||\n  ''\n);\nconst message = String(errObj.message || 'Unknown error').substring(0, 500);\n\nconsole.log(`[JSearch] Fetch failed for query=\"${query}\": ${statusCode} ${message}`);\n\nreturn [{\n  json: {\n    _type: 'failure',\n    run_id: runId,\n    discovered_at: new Date().toISOString(),\n    source: 'jsearch',\n    company: '',\n    slug: '',\n    query: query,\n    status_code: statusCode,\n    error_message: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "id": "74edf54f-6480-4a58-bcf4-53a9da6ea12c",
+      "name": "Build Error Response"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        720,
+        -112
+      ],
+      "id": "43032e0a-934f-485e-b08b-279ba5ba4af9",
+      "name": "Merge"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Build Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Queries": {
+      "main": [
+        [
+          {
+            "node": "Jsearch API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jsearch API": {
+      "main": [
+        [
+          {
+            "node": "Parse and Normalize",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Track Usage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Track Usage": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Normalize": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "d55221bf-d53b-41b6-b101-0ba4338ac3c8",
+  "activeVersionId": "d55221bf-d53b-41b6-b101-0ba4338ac3c8",
+  "versionCounter": 134,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-16T01:01:09.814Z",
+      "createdAt": "2026-05-16T01:01:09.814Z",
+      "role": "workflow:owner",
+      "workflowId": "mrj4z2FQx62Czp14",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version d55221bf",
+    "description": ""
+  }
+}

@@ -1,0 +1,292 @@
+{
+    "updatedAt":  "2026-05-30T03:12:50.792Z",
+    "createdAt":  "2026-05-15T20:02:44.333Z",
+    "id":  "pREJLEQeol4EzFpp",
+    "name":  "Agent 8 - Discovery Scorer",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+
+                                     },
+                      "type":  "n8n-nodes-base.manualTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       -448,
+                                       -48
+                                   ],
+                      "id":  "804e04e0-9e27-4c29-85c1-fd8995d48d99",
+                      "name":  "When clicking â€˜Execute workflowâ€™"
+                  },
+                  {
+                      "parameters":  {
+                                         "workflowInputs":  {
+                                                                "values":  [
+                                                                               {
+                                                                                   "name":  "config",
+                                                                                   "type":  "object"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "system_prompt"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "company"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "title"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "location"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "description"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "posted_at"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "master_doc"
+                                                                               }
+                                                                           ]
+                                                            }
+                                     },
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       -448,
+                                       -192
+                                   ],
+                      "id":  "b7ee2f4f-7ff0-43ff-b75a-0f4b9c068668",
+                      "name":  "Trigger"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// Set Inputs â€” Agent 8: Discovery Scorer\n// Emits flat fields that Build Score Prompt consumes.\n// Inputs are explicitly separated into three groups:\n//   1. Job fields (the role being scored)\n//   2. Target inputs â€” used ONLY by target dimension sub-scores\n//   3. Background inputs â€” used ONLY by background dimension sub-scores\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return \u0027\u0027;\n  if (typeof val !== \u0027string\u0027) return val;\n  let cleaned = val;\n  while (cleaned.length \u003e 0 \u0026\u0026 cleaned.charAt(0) === \u0027=\u0027) {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\n\nconst provider = strip(config.provider_discovery_scorer);\nif (!provider) throw new Error(\u0027[Agent 8] config.provider_discovery_scorer is required.\u0027);\nconst model = strip(config.model_discovery_scorer);\nif (!model) throw new Error(\u0027[Agent 8] config.model_discovery_scorer is required.\u0027);\nconst maxTokens = Number(config.max_tokens_discovery_scorer);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error(\u0027[Agent 8] config.max_tokens_discovery_scorer is required and must be a number.\u0027);\n}\n\nconst num = (v) =\u003e {\n  const n = Number(strip(v));\n  return Number.isFinite(n) ? n : null;\n};\n\nconst weightKeys = {\n  title_match: \u0027weight_title_match\u0027,\n  level_match: \u0027weight_level_match\u0027,\n  role_type_match: \u0027weight_role_type_match\u0027,\n  domain_match: \u0027weight_domain_match\u0027,\n  location_match: \u0027weight_location_match\u0027,\n  salary_signal: \u0027weight_salary_signal\u0027\n};\nconst weights = {};\nconst missingWeights = [];\nfor (const [dim, cfgKey] of Object.entries(weightKeys)) {\n  const w = num(config[cfgKey]);\n  if (w === null) missingWeights.push(cfgKey);\n  weights[dim] = w === null ? 0 : w;\n}\nif (missingWeights.length \u003e 0) {\n  throw new Error(`[Agent 8] Missing/invalid weight config: ${missingWeights.join(\u0027, \u0027)}.`);\n}\n\nconst ts = num(config.discovery_threshold_strong_fit);\nconst tm = num(config.discovery_threshold_fit);\nconst tw = num(config.discovery_threshold_weak_fit);\nif (ts === null || tm === null || tw === null) {\n  throw new Error(\u0027[Agent 8] discovery_threshold_strong_match/_match/_weak_match are required numbers.\u0027);\n}\nconst thresholds = { strong_fit: ts, fit: tm, weak_fit: tw };\n\n// target_location falls back to applicant_location when blank, per config description\nconst targetLocation = strip(config.target_location) || strip(config.applicant_location) || \u0027\u0027;\nconst targetCountry = strip(config.target_country) || \u0027\u0027;\nconst targetEmploymentTypes = strip(config.employment_type_considered) || \u0027\u0027;\nconst backgroundTitles = strip(config.background_titles) || \u0027\u0027;\n\nconsole.log(`[Agent 8 Set Inputs] job: ${trigger.company || \u0027unknown\u0027} / ${trigger.title || \u0027unknown\u0027}, master_doc: ${(trigger.master_doc || \u0027\u0027).length} chars, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    provider,\n    model,\n    max_tokens: maxTokens,\n    weights,\n    thresholds,\n    // â”€â”€ Job fields (the role being scored) â”€â”€\n    company: trigger.company || \u0027\u0027,\n    title: trigger.title || \u0027\u0027,\n    location: trigger.location || \u0027\u0027,\n    remote: trigger.remote === true,\n    description: trigger.description || \u0027\u0027,\n    posted_at: trigger.posted_at || \u0027\u0027,\n    // â”€â”€ Target inputs (the search) â€” used ONLY by target sub-scores â”€â”€\n    target_titles: config.target_titles || \u0027\u0027,\n    target_location: targetLocation,\n    target_country: targetCountry,\n    employment_type_considered: targetEmploymentTypes,\n    domain_interests: config.domain_interests || \u0027\u0027,\n    // â”€â”€ Background inputs (the candidate) â€” used ONLY by background sub-scores â”€â”€\n    background_titles: backgroundTitles,\n    profile_summary: config.profile_summary || \u0027\u0027,\n    master_doc: trigger.master_doc || \u0027\u0027\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -160,
+                                       -96
+                                   ],
+                      "id":  "f574c976-0f50-4142-9cbb-b0100845a83e",
+                      "name":  "Set Inputs"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const data = $input.item.json;\n\nconst OUTPUT_CONTRACT = `\n\nOutput EXACTLY this JSON. No preamble, no markdown fences, no commentary:\n\n{\n  \"dimensions\": {\n    \"title_match\":      { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e },\n    \"level_match\":      { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e },\n    \"role_type_match\":  { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e },\n    \"domain_match\":     { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e },\n    \"location_match\":   { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e },\n    \"salary_signal\":    { \"target\": \u003cinteger 0-10 or \"missing\"\u003e, \"background\": \u003cinteger 0-10 or \"missing\"\u003e }\n  },\n  \"restrictions\": [\n    { \"type\": \"\u003cshort free-form label\u003e\", \"detail\": \"\u003cone sentence\u003e\", \"severity\": \"hard|soft\" }\n  ],\n  \"strengths\": {\n    \"target\":     [\"\u003cconcrete target-anchored strength\u003e\", \"...\"],\n    \"background\": [\"\u003cconcrete background-anchored strength\u003e\", \"...\"]\n  },\n  \"gaps\": {\n    \"target\":     [\"\u003cconcrete target-anchored gap\u003e\", \"...\"],\n    \"background\": [\"\u003cconcrete background-anchored gap\u003e\", \"...\"]\n  },\n  \"rationale\": \"\u003c1-2 sentence summary that names any divergence between target and background fit\u003e\"\n}\n\n== PER-DIMENSION SEMANTICS ==\n\ntarget     = degree to which the job matches the CANDIDATE TARGETS block (the search criteria). Independent of who the candidate actually is.\nbackground = degree to which the job matches the CANDIDATE BACKGROUND block (career evidence). Independent of what they searched for.\n\ndomain_match calibration (apply to BOTH target and background, each against its own block\u0027s domain signal):\n- full match on the primary domain                       =\u003e 8-10\n- partial match: job hits 1 of several listed interests  =\u003e 5-7\n- adjacent / tangential domain                           =\u003e 3-4\n- unrelated domain                                       =\u003e 0-2\n- no domain signal in the block (empty interests)        =\u003e 5 (neutral)\nExample: domain_interests = \"robotics, autonomous systems, saas\" and the job is a SaaS company. That matches 1 of 3 listed interests =\u003e 5-7, NOT 3. Do not under-score partial matches.\n\nlocation_match calibration (target and background MUST be equal â€” see special rule below):\n- job location inside the target geography (or remote when remote is acceptable) =\u003e 9-10\n- same metro / commutable / same country generic                                =\u003e 6-8\n- different region, same country                                                =\u003e 3-5\n- different country / explicitly excluded location                              =\u003e 0-2\nScore location ONLY against the target_location / target_country config fields and the job\u0027s location + remote flag. Do NOT read location preferences out of profile_summary or master_doc.\n\nSpecial rule for location_match: target and background MUST be equal. Location depends on the job and the search location, not on candidate history. If you find yourself giving them different values, you are wrong â€” re-score.\n\n== INPUT ISOLATION (the most common error to avoid) ==\n\nWhen scoring a \"target\" sub-score for ANY dimension, consult ONLY the CANDIDATE TARGETS block. Do NOT consult background_titles, profile_summary, or master_doc.\n\nWhen scoring a \"background\" sub-score for ANY dimension, consult ONLY the CANDIDATE BACKGROUND block. Do NOT consult target_titles, target_location, target_country, employment_type_considered, or domain_interests.\n\nA common failure mode: penalizing the target title score because the candidate is over- or under-leveled for the role. That belongs in background\u0027s level_match, not in target\u0027s title_match. The target score is about the SEARCH, not the CANDIDATE.\n\nWorked example. CANDIDATE TARGETS: title=\"Software engineer\", location=\"Bay Area\". CANDIDATE BACKGROUND: career history shows 15 years VP/Director leadership. JOB: \"Software Engineer, Web Infrastructure\" in San Francisco.\n\nCorrect:\n- title_match: target=9 (literal match), background=6 (engineer-adjacent but not their actual recent titles)\n- level_match: target=8 (no seniority in target), background=2 (VP vs IC)\n- role_type_match: target=9 (IC SWE matches \"Software engineer\"), background=4 (they\u0027ve been managing, not building)\n- domain_match: target=7 (target unspecified), background=3 (AI/ML, not web infra)\n- location_match: target=10, background=10 (SF in Bay Area)\n\nIncorrect (the actual failure to avoid):\n- title_match: target=3, background=7 â€” this inverts the dimension by treating \"VP/Director\" career history as the search target.\n\n== CONFIG PRIMACY ==\n\nThe CANDIDATE TARGETS block is sourced from explicit config fields and is AUTHORITATIVE for every target sub-score. If profile_summary or master_doc expresses a preference (location, remote, employment type, domain, seniority) that contradicts a config field, the CONFIG FIELD WINS for target scoring. profile_summary preferences are background context, not search criteria.\n\nWorked example. target_location = \"Bay Area\" (config). profile_summary says \"remote-first, fractional engagements preferred\". The job is on-site in San Francisco.\n- Correct target location_match: 10 â€” the job is in the Bay Area, which is the authoritative target. Ignore the \"remote-first\" line from profile_summary when scoring target.\n- The \"remote-first\" preference may inform background or a soft restriction, but it does NOT lower the target location score.\n\nIf the config target field is blank/missing, fall back to neutral (5) rather than importing a preference from profile_summary.\n\n== SELF-CHECK ==\n\nBefore emitting JSON, scan your dimensions:\n1. If the target column and background column track each other within 1-2 points across every dimension, you collapsed the inputs â€” re-score with strict isolation. The two columns are designed to diverge.\n2. Confirm location_match.target === location_match.background. If not, re-score.\n3. Confirm no target sub-score was lowered because of career level, recent titles, or any preference found only in profile_summary/master_doc. If one was, re-score it against the TARGETS/config block alone.\n4. Confirm domain_match did not under-score a partial (1-of-many) match â€” partials are 5-7, not 3-4.\n\n== USAGE ==\n\nUse the literal string \"missing\" for any sub-score the JD does not support â€” independently for target and background. Do NOT guess. Severity is \"hard\" or \"soft\" (use \"hard\" for disqualifying requirements). Empty arrays are allowed for strengths.target, strengths.background, gaps.target, gaps.background, and restrictions.`;\n\nconst system = (data.system_prompt || \u0027\u0027) + OUTPUT_CONTRACT;\n\nconst user_message = `== CANDIDATE TARGETS (anchor for target sub-scores â€” DO NOT use for background sub-scores) ==\nTarget titles: ${data.target_titles}\nTarget location: ${data.target_location}\nTarget country: ${data.target_country}\nEmployment types considered: ${data.employment_type_considered}\nDomain interests: ${data.domain_interests}\n\n== CANDIDATE BACKGROUND (anchor for background sub-scores â€” DO NOT use for target sub-scores) ==\nProfile summary: ${data.profile_summary}\nBackground titles: ${data.background_titles}\nCareer history:\n${data.master_doc}\n\n== JOB ==\nCompany: ${data.company}\nTitle: ${data.title}\nLocation: ${data.location}\nRemote: ${data.remote ? \u0027yes\u0027 : \u0027no\u0027}\nPosted at: ${data.posted_at || \u0027(not provided)\u0027}\n\nJob Description:\n${data.description}\n\nScore this job across the 6 dimensions, producing TWO independent sub-scores per dimension (target and background) per the OUTPUT contract. Anchor each sub-score on the matching input block above:\n\n- target sub-scores answer \"does this job match the SEARCH?\" using ONLY the CANDIDATE TARGETS block.\n- background sub-scores answer \"does this job match the CANDIDATE?\" using ONLY the CANDIDATE BACKGROUND block.\n- The two sub-scores are independent and are expected to diverge. Common patterns: over-qualified (high target, low background), under-qualified (low target, high background), aligned (both high), miss (both low).\n\nGround strengths and gaps in concrete evidence from the posting and the relevant input block. Tag each strength/gap as target-anchored or background-anchored. If target and background fit diverge significantly, name the divergence in the rationale.`;\n\nconsole.log(`[Agent 8 Build Prompt] system: ${system.length} chars, user: ${user_message.length} chars, master_doc: ${(data.master_doc || \u0027\u0027).length} chars`);\n\nreturn {\n  json: {\n    ...data,\n    system,\n    user_message\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       48,
+                                       -96
+                                   ],
+                      "id":  "c7725512-3116-4ff4-821a-e85c2a3c7473",
+                      "name":  "Build Score Prompt"
+                  },
+                  {
+                      "parameters":  {
+                                         "workflowId":  {
+                                                            "__rl":  true,
+                                                            "value":  "mxnzrmY5JgwI2DNY",
+                                                            "mode":  "list",
+                                                            "cachedResultUrl":  "/workflow/mxnzrmY5JgwI2DNY",
+                                                            "cachedResultName":  "Call LLM"
+                                                        },
+                                         "workflowInputs":  {
+                                                                "mappingMode":  "defineBelow",
+                                                                "value":  {
+                                                                              "provider":  "=={{ $json.provider }}",
+                                                                              "model":  "=={{ $json.model }}",
+                                                                              "system":  "=={{ $json.system }}",
+                                                                              "user_message":  "=={{ $json.user_message }}",
+                                                                              "max_tokens":  "=={{ Number($json.max_tokens) }}"
+                                                                          },
+                                                                "matchingColumns":  [
+
+                                                                                    ],
+                                                                "schema":  [
+                                                                               {
+                                                                                   "id":  "provider",
+                                                                                   "displayName":  "provider",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "model",
+                                                                                   "displayName":  "model",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "system",
+                                                                                   "displayName":  "system",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "user_message",
+                                                                                   "displayName":  "user_message",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "max_tokens",
+                                                                                   "displayName":  "max_tokens",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               }
+                                                                           ],
+                                                                "attemptToConvertTypes":  false,
+                                                                "convertFieldsToString":  true
+                                                            },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.executeWorkflow",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       272,
+                                       -96
+                                   ],
+                      "id":  "586b4a1e-4086-4fa8-945a-cb3f2d99a94a",
+                      "name":  "Call LLM",
+                      "retryOnFail":  false,
+                      "waitBetweenTries":  2000
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "// Agent 8: format output (Discovery Scorer)\n// Mode: Run Once for All Items\n// Dual scoring: each dimension has {target, background} sub-scores. Computes\n// target_overall and background_overall using the same weight set, buckets each\n// against the same thresholds. The \"primary\" overall_score / verdict mirror\n// target-driven values so existing downstream consumers stay correct.\n\nconst callLLM = $(\u0027Call LLM\u0027).first().json;\n\nconst REQUIRED_DIMS = [\n  \u0027title_match\u0027, \u0027level_match\u0027, \u0027role_type_match\u0027,\n  \u0027domain_match\u0027, \u0027location_match\u0027, \u0027salary_signal\u0027\n];\n\nconst emptyResult = {\n  overall_score: 0,\n  background_overall_score: 0,\n  verdict: \u0027no_fit\u0027,\n  background_verdict: \u0027no_fit\u0027,\n  dimensions: {},\n  restrictions: [],\n  strengths: { target: [], background: [] },\n  gaps: { target: [], background: [] },\n  rationale: \u0027\u0027\n};\n\nif (callLLM.success === false) {\n  console.log(`[Agent 8] LLM call failed: ${callLLM.error?.category || \u0027unknown\u0027} â€” ${callLLM.error?.message || \u0027no message\u0027}`);\n  return {\n    json: {\n      success: false,\n      ...emptyResult,\n      tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n      cached_input_tokens: callLLM.cached_input_tokens || 0,\n      cache_write_tokens: callLLM.cache_write_tokens || 0,\n      model_used: callLLM.model_used || \u0027unknown\u0027,\n      provider_used: callLLM.provider_used || \u0027unknown\u0027,\n      errors: [...(callLLM.errors || [])],\n      error: callLLM.error || {\n        category: \u0027unknown\u0027,\n        type: \u0027unknown\u0027,\n        message: \u0027Call LLM returned success: false with no error object\u0027,\n        provider: callLLM.provider_used || \u0027unknown\u0027,\n        model: callLLM.model_used || \u0027unknown\u0027\n      }\n    }\n  };\n}\n\nconst response = $input.item.json;\nconst text = response.text || response.content || response.response || response.output_text || response.completion || \u0027\u0027;\n\nconst parseErrors = [];\nlet parsed = null;\nlet errorType = \u0027json_parse_failure\u0027;\n\nconst tryParse = (str) =\u003e {\n  try { return JSON.parse(str); } catch (e) { return null; }\n};\n\nif (!text) {\n  parseErrors.push(`No text returned from Call LLM. Keys: ${Object.keys(response).join(\u0027, \u0027)}`);\n  errorType = \u0027empty_output\u0027;\n  console.log(`[Agent 8] ${parseErrors[parseErrors.length - 1]}`);\n} else {\n  const rawText = String(text);\n  let cleaned = rawText.replace(/^```(?:json)?\\s*/i, \u0027\u0027).replace(/\\s*```\\s*$/i, \u0027\u0027).trim();\n  parsed = tryParse(cleaned);\n  if (!parsed) {\n    const firstBrace = cleaned.indexOf(\u0027{\u0027);\n    const lastBrace = cleaned.lastIndexOf(\u0027}\u0027);\n    if (firstBrace !== -1 \u0026\u0026 lastBrace \u003e firstBrace) {\n      parsed = tryParse(cleaned.substring(firstBrace, lastBrace + 1));\n    }\n  }\n  if (!parsed) {\n    parseErrors.push(`Could not parse JSON. Start: ${rawText.substring(0, 300)}`);\n    console.log(`[Agent 8] JSON parse failed. Raw content (first 500 chars):\\n${rawText.slice(0, 500)}`);\n  } else {\n    const dims = parsed.dimensions || {};\n    const missing = REQUIRED_DIMS.filter(d =\u003e !(d in dims));\n    if (missing.length \u003e 0) {\n      parseErrors.push(`Missing dimensions: ${missing.join(\u0027, \u0027)}`);\n      errorType = \u0027schema_violation\u0027;\n      console.log(`[Agent 8] ${parseErrors[parseErrors.length - 1]}`);\n      parsed = null;\n    } else {\n      const badShape = REQUIRED_DIMS.filter(d =\u003e {\n        const v = dims[d];\n        return !(v \u0026\u0026 typeof v === \u0027object\u0027 \u0026\u0026 (\u0027target\u0027 in v) \u0026\u0026 (\u0027background\u0027 in v));\n      });\n      if (badShape.length \u003e 0) {\n        parseErrors.push(`Dimensions missing target/background sub-scores: ${badShape.join(\u0027, \u0027)}`);\n        errorType = \u0027schema_violation\u0027;\n        console.log(`[Agent 8] ${parseErrors[parseErrors.length - 1]}`);\n        parsed = null;\n      }\n    }\n  }\n}\n\nconst success = parsed !== null;\nlet error = null;\nlet target_overall = 0;\nlet background_overall = 0;\nlet verdict = \u0027no_fit\u0027;\nlet background_verdict = \u0027no_fit\u0027;\nlet dims = {};\n\nconst scoreNum = (raw) =\u003e (typeof raw === \u0027number\u0027 \u0026\u0026 isFinite(raw)) ? raw : 0;\nconst bucketize = (s, t) =\u003e {\n  if (s \u003e= t.strong_fit) return \u0027strong_fit\u0027;\n  if (s \u003e= t.fit) return \u0027fit\u0027;\n  if (s \u003e= t.weak_fit) return \u0027weak_fit\u0027;\n  return \u0027no_fit\u0027;\n};\n\nif (success) {\n  dims = parsed.dimensions || {};\n  const weights = $(\u0027Set Inputs\u0027).first().json.weights;\n  const thresholds = $(\u0027Set Inputs\u0027).first().json.thresholds;\n\n  let targetSum = 0;\n  let backgroundSum = 0;\n  for (const d of REQUIRED_DIMS) {\n    const w = weights[d] || 0;\n    targetSum += w * scoreNum(dims[d].target);\n    backgroundSum += w * scoreNum(dims[d].background);\n  }\n  target_overall = Math.round(targetSum * 10);\n  background_overall = Math.round(backgroundSum * 10);\n  verdict = bucketize(target_overall, thresholds);\n  background_verdict = bucketize(background_overall, thresholds);\n} else {\n  error = {\n    category: \u0027output_quality\u0027,\n    type: errorType,\n    message: parseErrors.join(\u0027; \u0027) || \u0027Could not parse scorer output\u0027,\n    provider: callLLM.provider_used || \u0027unknown\u0027,\n    model: callLLM.model_used || \u0027unknown\u0027\n  };\n}\n\nconst sanitizeStrGap = (obj) =\u003e {\n  if (obj \u0026\u0026 typeof obj === \u0027object\u0027 \u0026\u0026 !Array.isArray(obj)) {\n    return {\n      target: Array.isArray(obj.target) ? obj.target : [],\n      background: Array.isArray(obj.background) ? obj.background : []\n    };\n  }\n  return { target: [], background: [] };\n};\n\nconsole.log(`[Agent 8] target_overall=${target_overall} (${verdict}), background_overall=${background_overall} (${background_verdict})`);\nconsole.log(`[Agent 8] Tokens: ${callLLM.input_tokens || 0}in + ${callLLM.output_tokens || 0}out + ${callLLM.cached_input_tokens || 0}cached + ${callLLM.cache_write_tokens || 0}cache_write`);\n\nreturn {\n  json: {\n    success,\n    overall_score: target_overall,\n    background_overall_score: background_overall,\n    verdict,\n    background_verdict,\n    dimensions: dims,\n    restrictions: success \u0026\u0026 Array.isArray(parsed.restrictions) ? parsed.restrictions : [],\n    strengths: sanitizeStrGap(success ? parsed.strengths : null),\n    gaps: sanitizeStrGap(success ? parsed.gaps : null),\n    rationale: success ? (parsed.rationale || \u0027\u0027) : \u0027\u0027,\n    tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n    cached_input_tokens: callLLM.cached_input_tokens || 0,\n    cache_write_tokens: callLLM.cache_write_tokens || 0,\n    model_used: callLLM.model_used || \u0027unknown\u0027,\n    provider_used: callLLM.provider_used || \u0027unknown\u0027,\n    errors: parseErrors,\n    error\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       480,
+                                       -96
+                                   ],
+                      "id":  "056d8e36-e710-4a08-bd74-d44b85ab8cb7",
+                      "name":  "Format output"
+                  }
+              ],
+    "connections":  {
+                        "Trigger":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Set Inputs",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "When clicking â€˜Execute workflowâ€™":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Set Inputs",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                        "Set Inputs":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Build Score Prompt",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Build Score Prompt":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Call LLM",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Call LLM":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Format output",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  {
+
+                },
+    "versionId":  "cfdb41f5-8562-4ed0-84e1-f7dfa250b60f",
+    "activeVersionId":  "cfdb41f5-8562-4ed0-84e1-f7dfa250b60f",
+    "versionCounter":  140,
+    "triggerCount":  0,
+    "tags":  [
+
+             ],
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-05-15T20:02:44.336Z",
+                       "createdAt":  "2026-05-15T20:02:44.336Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "pREJLEQeol4EzFpp",
+                       "projectId":  "kZS932EjZfpXmb7H",
+                       "project":  {
+                                       "updatedAt":  "2026-05-06T02:54:00.051Z",
+                                       "createdAt":  "2026-05-06T02:52:14.918Z",
+                                       "id":  "kZS932EjZfpXmb7H",
+                                       "name":  "Maestro AI",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+                                   }
+                   }
+               ],
+    "versionMetadata":  {
+                            "name":  "Version cfdb41f5",
+                            "description":  ""
+                        }
+}

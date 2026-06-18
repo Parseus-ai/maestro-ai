@@ -1,0 +1,353 @@
+{
+    "updatedAt":  "2026-06-04T06:45:06.240Z",
+    "createdAt":  "2026-05-13T01:27:45.233Z",
+    "id":  "B6y7tXIZ43huFXOF",
+    "name":  "Agent 7 - Resume Scorer",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+
+                                     },
+                      "type":  "n8n-nodes-base.manualTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       -448,
+                                       -128
+                                   ],
+                      "id":  "dcfff010-4a1d-4ece-833e-5a08fb50b68a",
+                      "name":  "When clicking â€˜Execute workflowâ€™"
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "// Agent 7: format output as standard envelope\n// Mode: Run Once for All Items\n// Reads from Call LLM\u0027s normalized response.\n// Propagates structured error from Call LLM on failure.\n// Returns flat scorer fields at top level for Application Recorder consumption.\n\nconst callLLM = $(\u0027Call LLM\u0027).first().json;\n\n// Empty result shape returned on any failure (preserves downstream consumer contract)\nconst emptyResult = {\n  overall_score: 0,\n  recommendation: \u0027unknown\u0027,\n  dimensions: {},\n  strengths: [],\n  gaps: [],\n  rationale: \u0027\u0027,\n  strengths_text: \u0027\u0027,\n  gaps_text: \u0027\u0027,\n  score_rationale: \u0027\u0027\n};\n\n// Call LLM failed â€” propagate error\nif (callLLM.success === false) {\n  console.log(`[Agent 7] LLM call failed: ${callLLM.error?.category || \u0027unknown\u0027} â€” ${callLLM.error?.message || \u0027no message\u0027}`);\n  return {\n    json: {\n      success: false,\n      ...emptyResult,\n      tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n      cached_input_tokens: callLLM.cached_input_tokens || 0,\n      cache_write_tokens: callLLM.cache_write_tokens || 0,\n      model_used: callLLM.model_used || \u0027unknown\u0027,\n      provider_used: callLLM.provider_used || \u0027unknown\u0027,\n      errors: [...(callLLM.errors || [])],\n      error: callLLM.error || {\n        category: \u0027unknown\u0027,\n        type: \u0027unknown\u0027,\n        message: \u0027Call LLM returned success: false with no error object\u0027,\n        provider: callLLM.provider_used || \u0027unknown\u0027,\n        model: callLLM.model_used || \u0027unknown\u0027\n      }\n    }\n  };\n}\n\n// Normal path: parse JSON from content\nconst response = $input.item.json;\nconst text = response.text || response.content || response.response || response.output_text || response.completion || \u0027\u0027;\n\nconst parseErrors = [];\nlet parsed = null;\nlet repaired = false;\n\n// Balance-repair for truncated JSON: appends missing closing braces/brackets.\n// Walks the string tracking string-literal state (so braces inside strings are\n// ignored) and escape sequences. Returns the input with any unclosed\n// {/[ closed in correct nesting order, plus a closing quote if the string\n// literal itself was left open. Conservative: only ever APPENDS closers.\nconst balanceRepair = (s) =\u003e {\n  const stack = [];\n  let inStr = false;\n  let escaped = false;\n  for (let i = 0; i \u003c s.length; i++) {\n    const c = s[i];\n    if (inStr) {\n      if (escaped) { escaped = false; }\n      else if (c === \u0027\\\\\u0027) { escaped = true; }\n      else if (c === \u0027\"\u0027) { inStr = false; }\n      continue;\n    }\n    if (c === \u0027\"\u0027) { inStr = true; }\n    else if (c === \u0027{\u0027 || c === \u0027[\u0027) { stack.push(c); }\n    else if (c === \u0027}\u0027 || c === \u0027]\u0027) { stack.pop(); }\n  }\n  let out = s;\n  if (inStr) out += \u0027\"\u0027;                 // close a dangling string literal\n  for (let i = stack.length - 1; i \u003e= 0; i--) {\n    out += stack[i] === \u0027{\u0027 ? \u0027}\u0027 : \u0027]\u0027; // close in reverse nesting order\n  }\n  return out;\n};\n\nif (!text) {\n  parseErrors.push(`No text returned from Call LLM. Keys: ${Object.keys(response).join(\u0027, \u0027)}`);\n  console.log(`[Agent 7] ${parseErrors[parseErrors.length - 1]}`);\n} else {\n  const cleaned = String(text).replace(/^```(?:json)?\\s*/i, \u0027\u0027).replace(/\\s*```\\s*$/i, \u0027\u0027).trim();\n  try {\n    parsed = JSON.parse(cleaned);\n  } catch (err) {\n    // Raw parse failed â€” attempt a single brace-balance repair before giving up.\n    try {\n      const fixed = balanceRepair(cleaned);\n      if (fixed !== cleaned) {\n        parsed = JSON.parse(fixed);\n        repaired = true;\n        const note = \u0027Recovered truncated JSON via brace-balance repair\u0027;\n        parseErrors.push(note);   // soft note: success stays true, visible in analytics\n        console.log(`[Agent 7] ${note}`);\n      } else {\n        throw err; // nothing to repair â€” original failure stands\n      }\n    } catch (err2) {\n      const errMsg = err2 instanceof Error ? err2.message : String(err2);\n      parseErrors.push(`Failed to parse JSON: ${errMsg}`);\n      console.log(`[Agent 7] JSON parse failed (repair did not recover). Raw content (first 500 chars):\\n${String(text).slice(0, 500)}`);\n    }\n  }\n\n  if (parsed \u0026\u0026 typeof parsed.overall_score !== \u0027number\u0027) {\n    parseErrors.push(\u0027Missing overall_score in response\u0027);\n    console.log(`[Agent 7] ${parseErrors[parseErrors.length - 1]}`);\n    parsed = null;\n  }\n}\n\nconst success = parsed !== null;\nlet error = null;\nif (!success) {\n  // Distinguish empty output vs parse failure vs schema violation.\n  // A \"repaired\" note may precede the real failure â€” find the first HARD error.\n  const hardErr = parseErrors.find(e =\u003e\n    e.startsWith(\u0027No text\u0027) || e.startsWith(\u0027Missing overall_score\u0027) || e.startsWith(\u0027Failed to parse\u0027)\n  ) || \u0027\u0027;\n  let errorType = \u0027json_parse_failure\u0027;\n  if (hardErr.startsWith(\u0027No text\u0027)) errorType = \u0027empty_output\u0027;\n  else if (hardErr.startsWith(\u0027Missing overall_score\u0027)) errorType = \u0027schema_violation\u0027;\n\n  error = {\n    category: \u0027output_quality\u0027,\n    type: errorType,\n    message: parseErrors.join(\u0027; \u0027) || \u0027Could not parse scorer output\u0027,\n    provider: callLLM.provider_used || \u0027unknown\u0027,\n    model: callLLM.model_used || \u0027unknown\u0027\n  };\n}\n\nconst arr2text = (arr) =\u003e Array.isArray(arr) ? arr.join(\u0027; \u0027) : \u0027\u0027;\n\nconsole.log(`[Agent 7] Score: ${parsed?.overall_score ?? \u0027parse failed\u0027} (${parsed?.recommendation || \u0027n/a\u0027})${repaired ? \u0027 [repaired]\u0027 : \u0027\u0027}`);\nconsole.log(`[Agent 7] Tokens: ${callLLM.input_tokens || 0}in + ${callLLM.output_tokens || 0}out + ${callLLM.cached_input_tokens || 0}cached + ${callLLM.cache_write_tokens || 0}cache_write`);\n\nreturn {\n  json: {\n    success,\n    overall_score: parsed?.overall_score ?? 0,\n    recommendation: parsed?.recommendation || \u0027unknown\u0027,\n    dimensions: parsed?.dimensions || {},\n    strengths: parsed?.strengths || [],\n    gaps: parsed?.gaps || [],\n    rationale: parsed?.rationale || \u0027\u0027,\n    strengths_text: arr2text(parsed?.strengths),\n    gaps_text: arr2text(parsed?.gaps),\n    score_rationale: parsed?.rationale || \u0027\u0027,\n    tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n    cached_input_tokens: callLLM.cached_input_tokens || 0,\n    cache_write_tokens: callLLM.cache_write_tokens || 0,\n    model_used: callLLM.model_used || \u0027unknown\u0027,\n    provider_used: callLLM.provider_used || \u0027unknown\u0027,\n    errors: parseErrors,\n    error\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       528,
+                                       -112
+                                   ],
+                      "id":  "b44f0a3c-892b-4535-989b-1254ee287a60",
+                      "name":  "Format output"
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "// Set Inputs â€” Agent 7: Resume Scorer\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return \u0027\u0027;\n  if (typeof val !== \u0027string\u0027) return val;\n  let cleaned = val;\n  while (cleaned.length \u003e 0 \u0026\u0026 cleaned.charAt(0) === \u0027=\u0027) {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\nconst descriptionHtml = strip(trigger.description_html);\nconst resumeMarkdown = strip(trigger.resume_markdown);\nconst masterDoc = strip(trigger.master_doc);\n\nconst provider = strip(config.provider_resume_scorer);\nif (!provider) {\n  throw new Error(\u0027[Agent 7] config.provider_resume_scorer is required. Set it in your config sheet (anthropic | openai | gemini).\u0027);\n}\n\nconst model = strip(config.model_resume_scorer);\nif (!model) {\n  throw new Error(\u0027[Agent 7] config.model_resume_scorer is required. Set it in your config sheet.\u0027);\n}\n\nconst maxTokens = Number(config.max_tokens_resume_scorer);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error(\u0027[Agent 7] config.max_tokens_resume_scorer is required and must be a number.\u0027);\n}\n\nconsole.log(`[Agent 7 Set Inputs] resume_markdown: ${resumeMarkdown.length} chars, master_doc: ${masterDoc.length} chars, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    description_html: descriptionHtml,\n    resume_markdown: resumeMarkdown,\n    master_doc: masterDoc,\n    provider,\n    model,\n    max_tokens: maxTokens,\n    profile_summary: config.profile_summary || \u0027\u0027,\n    target_titles: config.target_titles || \u0027\u0027,\n    domain_interests: config.domain_interests || \u0027\u0027\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -80,
+                                       -112
+                                   ],
+                      "id":  "c774c102-7f23-4093-b1f9-b89098af56ca",
+                      "name":  "Set Inputs"
+                  },
+                  {
+                      "parameters":  {
+                                         "workflowId":  {
+                                                            "__rl":  true,
+                                                            "value":  "mxnzrmY5JgwI2DNY",
+                                                            "mode":  "list",
+                                                            "cachedResultUrl":  "/workflow/mxnzrmY5JgwI2DNY",
+                                                            "cachedResultName":  "Call LLM"
+                                                        },
+                                         "workflowInputs":  {
+                                                                "mappingMode":  "defineBelow",
+                                                                "value":  {
+                                                                              "provider":  "=={{ $json.provider }}",
+                                                                              "model":  "=={{ $json.model }}",
+                                                                              "system":  "=={{ $json.system }}",
+                                                                              "user_message":  "=={{ $json.user_message }}",
+                                                                              "max_tokens":  "=={{ Number($json.max_tokens) }}"
+                                                                          },
+                                                                "matchingColumns":  [
+
+                                                                                    ],
+                                                                "schema":  [
+                                                                               {
+                                                                                   "id":  "provider",
+                                                                                   "displayName":  "provider",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "model",
+                                                                                   "displayName":  "model",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "system",
+                                                                                   "displayName":  "system",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "user_message",
+                                                                                   "displayName":  "user_message",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               },
+                                                                               {
+                                                                                   "id":  "max_tokens",
+                                                                                   "displayName":  "max_tokens",
+                                                                                   "required":  false,
+                                                                                   "defaultMatch":  false,
+                                                                                   "display":  true,
+                                                                                   "canBeUsedToMatch":  true,
+                                                                                   "type":  "string",
+                                                                                   "removed":  false
+                                                                               }
+                                                                           ],
+                                                                "attemptToConvertTypes":  false,
+                                                                "convertFieldsToString":  true
+                                                            },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.executeWorkflow",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       336,
+                                       -112
+                                   ],
+                      "id":  "0cbebe77-03b4-4b8e-b1ad-969bd43ced5f",
+                      "name":  "Call LLM",
+                      "retryOnFail":  false,
+                      "waitBetweenTries":  2000
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "// Build Prompt â€” Agent 7: Scorer\n// Persona, dimension definitions, weighted formula, and recommendation thresholds\n// live in system_prompt (Drive doc). This node injects the OUTPUT CONTRACT\n// (JSON schema downstream depends on) and per-job inputs.\n// Mode: Run Once for Each Item\n\nconst input = $input.item.json;\nconst descriptionHtml = input.description_html || \u0027\u0027;\nconst resumeMarkdown = input.resume_markdown || \u0027\u0027;\nconst profileSummary = input.profile_summary || \u0027\u0027;\nconst targetTitles = input.target_titles || \u0027\u0027;\nconst domainInterests = input.domain_interests || \u0027\u0027;\nconst systemPromptFromDoc = input.system_prompt || \u0027\u0027;\n\n// Validation\nif (!systemPromptFromDoc || systemPromptFromDoc.length \u003c 100) {\n  throw new Error(`[Agent 7] system_prompt missing or too short (${systemPromptFromDoc.length} chars). Check Prompt Loader output and orchestrator mapping.`);\n}\nif (!resumeMarkdown || resumeMarkdown.length \u003c 30) {\n  throw new Error(`[Agent 7] resume_markdown missing or too short (${resumeMarkdown.length} chars)`);\n}\nif (!descriptionHtml || descriptionHtml.length \u003c 30) {\n  throw new Error(`[Agent 7] description_html missing or too short (${descriptionHtml.length} chars)`);\n}\n\nconsole.log(`[Build Prompt] resume: ${resumeMarkdown.length} chars, JD: ${descriptionHtml.length} chars`);\nconsole.log(`[Build Prompt] systemPromptFromDoc: ${systemPromptFromDoc.length} chars`);\n\n// Pipeline-level output contract â€” JSON schema downstream Log Job Result depends on.\nconst OUTPUT_CONTRACT = `# OUTPUT CONTRACT (set by pipeline, do not override)\n\nOutput EXACTLY this JSON. No preamble, no markdown fences, no commentary outside JSON:\n\n{\n  \"overall_score\": \u003cinteger 0-100\u003e,\n  \"recommendation\": \"strong_fit\" or \"fit\" or \"weak_fit\" or \"no_fit\",\n  \"dimensions\": {\n    \"technical_skills_match\": \u003cinteger 0-10\u003e,\n    \"requirements_coverage\": \u003cinteger 0-10\u003e,\n    \"level_match\": \u003cinteger 0-10\u003e,\n    \"domain_relevance\": \u003cinteger 0-10\u003e,\n    \"role_type_alignment\": \u003cinteger 0-10\u003e,\n    \"portfolio_strength\": \u003cinteger 0-10\u003e\n  },\n  \"strengths\": [\"\u003cstrength 1\u003e\", \"\u003cstrength 2\u003e\"],\n  \"gaps\": [\"\u003cgap 1\u003e\", \"\u003cgap 2\u003e\"],\n  \"rationale\": \"\u003c1-2 sentence summary\u003e\"\n}`;\n\nconst system = systemPromptFromDoc + \u0027\\n\\n\u0027 + OUTPUT_CONTRACT;\n\nconst userMessage = `Score how well this resume matches the target job.\n\n# CANDIDATE POSITIONING CONTEXT\nProfile summary anchor: ${profileSummary || \u0027(derive from resume)\u0027}\nTarget title categories: ${targetTitles || \u0027(derive from resume)\u0027}\nDomain interests: ${domainInterests || \u0027(derive from resume)\u0027}\n\n# FULL JOB DESCRIPTION\n${descriptionHtml}\n\n# CANDIDATE\u0027S TAILORED RESUME\n${resumeMarkdown}`;\n\nconsole.log(`[Build Prompt] Final system: ${system.length} chars, user: ${userMessage.length} chars`);\n\nreturn {\n  json: {\n    ...input,\n    system,\n    user_message: userMessage,\n    prompt_chars: system.length + userMessage.length\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       128,
+                                       -112
+                                   ],
+                      "id":  "68949e5d-3433-4456-937f-d00304dbd576",
+                      "name":  "Build Score Prompt"
+                  },
+                  {
+                      "parameters":  {
+                                         "workflowInputs":  {
+                                                                "values":  [
+                                                                               {
+                                                                                   "name":  "description_html"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "resume_markdown"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "config",
+                                                                                   "type":  "object"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "system_prompt"
+                                                                               },
+                                                                               {
+                                                                                   "name":  "cascade_error",
+                                                                                   "type":  "object"
+                                                                               }
+                                                                           ]
+                                                            }
+                                     },
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       -448,
+                                       -288
+                                   ],
+                      "id":  "dd9b296a-493d-4003-9bcf-29e13cc2fc52",
+                      "name":  "Trigger"
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict",
+                                                                            "version":  3
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "31b3d6b2-633e-4b74-9d24-62afc0bbfc3f",
+                                                                                   "leftValue":  "={{ $json.cascade_error }}",
+                                                                                   "rightValue":  "",
+                                                                                   "operator":  {
+                                                                                                    "type":  "object",
+                                                                                                    "operation":  "notEmpty",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       -288,
+                                       -128
+                                   ],
+                      "id":  "0d1de351-e48f-49b8-b844-de0834d0416f",
+                      "name":  "Cascade"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// Build Cascade Output â€” Agent 7\n// Mode: Run Once for All Items\n// Fires when upstream agent (1) failed. Passes upstream error through unchanged.\n// Flat output shape matches Agent 7 Format Output for Application Recorder compatibility.\n\nconst trigger = $(\u0027Trigger\u0027).first().json;\nconst upstreamError = trigger.cascade_error || {};\n\nconsole.log(`[Agent 7] CASCADE â€” skipping due to ${upstreamError.source_agent || \u0027upstream\u0027}: ${upstreamError.category || \u0027unknown\u0027}`);\n\nreturn {\n  json: {\n    success: false,\n    cascaded: true,\n    overall_score: 0,\n    recommendation: \u0027unknown\u0027,\n    dimensions: {},\n    strengths: [],\n    gaps: [],\n    rationale: \u0027\u0027,\n    strengths_text: \u0027\u0027,\n    gaps_text: \u0027\u0027,\n    score_rationale: \u0027\u0027,\n    tokens: { input: 0, output: 0 },\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: \u0027skipped\u0027,\n    provider_used: \u0027skipped\u0027,\n    errors: [`cascade: ${upstreamError.source_agent || \u0027upstream\u0027}:${upstreamError.category || \u0027unknown\u0027}`],\n    error: upstreamError\n  }\n};"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -32,
+                                       -288
+                                   ],
+                      "id":  "5a0f27e5-6f33-4a4f-91c9-ee51fccf8af7",
+                      "name":  "Build Cascade Output"
+                  }
+              ],
+    "connections":  {
+                        "When clicking â€˜Execute workflowâ€™":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Cascade",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                        "Set Inputs":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Build Score Prompt",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Call LLM":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Format output",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Build Score Prompt":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Call LLM",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Trigger":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Cascade",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Cascade":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Build Cascade Output",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ],
+                                                     [
+                                                         {
+                                                             "node":  "Set Inputs",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  {
+
+                },
+    "versionId":  "f7668c92-4eea-4dd1-99b3-bed4e4746665",
+    "activeVersionId":  "f7668c92-4eea-4dd1-99b3-bed4e4746665",
+    "versionCounter":  127,
+    "triggerCount":  0,
+    "tags":  [
+
+             ],
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-05-13T01:27:45.234Z",
+                       "createdAt":  "2026-05-13T01:27:45.234Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "B6y7tXIZ43huFXOF",
+                       "projectId":  "kZS932EjZfpXmb7H",
+                       "project":  {
+                                       "updatedAt":  "2026-05-06T02:54:00.051Z",
+                                       "createdAt":  "2026-05-06T02:52:14.918Z",
+                                       "id":  "kZS932EjZfpXmb7H",
+                                       "name":  "Maestro AI",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+                                   }
+                   }
+               ],
+    "versionMetadata":  {
+                            "name":  "Version f7668c92",
+                            "description":  ""
+                        }
+}

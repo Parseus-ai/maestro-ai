@@ -1,0 +1,289 @@
+{
+  "updatedAt": "2026-05-28T02:02:22.604Z",
+  "createdAt": "2026-05-07T01:39:16.075Z",
+  "id": "dTZxXzWhdwqFODIU",
+  "name": "Agent 1 - Resume Builder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        -304
+      ],
+      "id": "d45fa1c2-c987-4c05-a0c9-11ef0e02967a",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build Prompt â€” Agent 1: Resume Drafter\n// All persona, style, and personalization rules live in system_prompt\n// (loaded from Drive doc via Prompt Loader). This node only constructs\n// the user_message with per-job context, and enforces the pipeline-level\n// output contract (no header â€” the resume converter adds that from config).\n// Mode: Run Once for Each Item\nconst input = $input.item.json;\n// Job data (passed in via plan from Fan Out Plans)\nconst jobData = (input.job && typeof input.job === 'object' && !Array.isArray(input.job))\n  ? input.job\n  : input;\nconst company = jobData.company || '';\nconst title = jobData.title || '';\nconst location = jobData.location || '';\nconst url = jobData.url || '';\nconst descriptionHtml = jobData.description_html || '';\n// Master career doc â€” source of truth for candidate facts\nconst masterDoc = input.master_doc || '';\n// Config â€” provides positioning context (profile, target titles, domain)\nlet config = input.config;\nif (typeof config === 'string' || !config || typeof config !== 'object') {\n  console.log('[Build Prompt] config not an object â€” using defaults');\n  config = {};\n}\nconst profileSummary = config.profile_summary || '';\nconst targetTitles = config.target_titles || '';\nconst domainInterests = config.domain_interests || '';\n// LLM routing\nconst provider = input.provider;\nconst model = input.model;\nconst maxTokens = input.max_tokens;\n// System prompt loaded from Drive doc (passed in by orchestrator)\nconst systemPromptFromDoc = input.system_prompt || '';\n// Validation\nif (!systemPromptFromDoc || systemPromptFromDoc.length < 100) {\n  throw new Error(`[Agent 1] system_prompt missing or too short (${systemPromptFromDoc.length} chars). Check Prompt Loader output and orchestrator mapping.`);\n}\nif (!masterDoc || masterDoc.length < 100) {\n  throw new Error(`[Agent 1] master_doc empty/short (${masterDoc.length} chars)`);\n}\nif (!descriptionHtml || descriptionHtml.length < 30) {\n  throw new Error(`[Agent 1] descriptionHtml empty/short (${descriptionHtml.length} chars)`);\n}\nconsole.log('[Build Prompt] company:', company);\nconsole.log('[Build Prompt] systemPromptFromDoc length:', systemPromptFromDoc.length);\nconsole.log('[Build Prompt] masterDoc length:', masterDoc.length);\nconsole.log('[Build Prompt] descriptionHtml length:', descriptionHtml.length);\nfunction cleanHTML(html) {\n  return String(html)\n    .replace(/<br\\s*\\/?>/gi, '\\n').replace(/<\\/p>/gi, '\\n\\n').replace(/<\\/li>/gi, '\\n').replace(/<li>/gi, '- ').replace(/<[^>]+>/g, '')\n    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ')\n    .replace(/\\n{3,}/g, '\\n\\n').trim();\n}\nconst cleanJD = cleanHTML(descriptionHtml);\n// Pipeline-level output contract â€” the only hardcoded rule here.\n// The resume converter adds name/contact/Education/etc. downstream from config.\nconst OUTPUT_CONTRACT = `# OUTPUT CONTRACT (set by pipeline, do not override)\n\nDo NOT include any of these in your output: name, contact info, Education, Credentials, Patents, Publications, Awards, or Skills section. The resume converter adds those downstream from the candidate's config.\n\nStart your response with \"# \" (the tagline) â€” first character must be \"#\" with no leading whitespace. Return ONLY the resume markdown body. No preamble, no commentary, no closing notes.\n\n## Professional Experience format\n\nFor each role, use this exact structure:\n\n### Company Name | Role Title | Start Year â€“ End Year\n\n*One-line scope summary tailored to the target role. No metrics, no bullets.*\n\n- First bullet (4-6 per role, action verb start, quantified where possible)\n- Second bullet\n- Third bullet\n\nRole header line must:\n- Start with \\`### \\` (the h3 marker â€” required for proper styling)\n- Use \\` | \\` (space-pipe-space) as the separator between company, title, and years\n- Use \\` â€“ \\` (en-dash with spaces) between start and end years\n- Contain NO bold or italic markdown â€” the renderer adds styling\n\nThe scope line directly under the role header must:\n- Be wrapped in \\`*...*\\` for italic\n- Be one line, no wrapping\n- Describe the role's scope (what kind of work, what domain)\n- Contain NO metrics â€” those belong in bullets\n- Have NO bullet marker (\\`-\\` or \\`*\\`)`;\nconst system = systemPromptFromDoc + '\\n\\n' + OUTPUT_CONTRACT;\nconst userMessage = `Tailor a resume for this specific job application.\n\n# CANDIDATE'S MASTER CAREER DOCUMENT\nThis is the ONLY source of truth for candidate facts. Do not fabricate any experience, metric, date, technology, or skill not stated below.\n\n${masterDoc}\n\n# TARGET JOB\nCompany: ${company}\nTitle: ${title}\n${location ? `Location: ${location}\\n` : ''}${url ? `URL: ${url}\\n` : ''}\n# FULL JOB DESCRIPTION\n${cleanJD}\n\n# CANDIDATE POSITIONING CONTEXT\nProfile summary anchor: ${profileSummary || '(derive from master document)'}\nTarget title categories: ${targetTitles || '(derive from master document)'}\nDomain interests: ${domainInterests || '(derive from master document)'}`;\nconsole.log(`[Build Prompt] Final system: ${system.length} chars, user: ${userMessage.length} chars`);\nreturn {\n  json: {\n    provider,\n    model,\n    system,\n    user_message: userMessage,\n    max_tokens: maxTokens,\n    prompt_chars: system.length + userMessage.length\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        -304
+      ],
+      "id": "d4dacc18-aa35-4956-8e1f-7a9684b23169",
+      "name": "Build Resume Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent 1: format output as standard envelope\n// Mode: Run Once for All Items\n// Propagates structured error from Call LLM on failure.\n\nconst llmResponse = $input.first().json;\n\n// Call LLM failed â€” propagate error without quality checks on empty content\nif (llmResponse.success === false) {\n  console.log(`[Agent 1] LLM call failed: ${llmResponse.error?.category || 'unknown'} â€” ${llmResponse.error?.message || 'no message'}`);\n  return [{\n    json: {\n      success: false,\n      result: { resume_markdown: '' },\n      tokens: {\n        input: llmResponse.input_tokens || 0,\n        output: llmResponse.output_tokens || 0\n      },\n      cached_input_tokens: llmResponse.cached_input_tokens || 0,\n      cache_write_tokens: llmResponse.cache_write_tokens || 0,\n      model_used: llmResponse.model_used || 'unknown',\n      provider_used: llmResponse.provider_used || 'unknown',\n      errors: [...(llmResponse.errors || [])],\n      error: llmResponse.error || {\n        category: 'unknown',\n        type: 'unknown',\n        message: 'Call LLM returned success: false with no error object',\n        provider: llmResponse.provider_used || 'unknown',\n        model: llmResponse.model_used || 'unknown'\n      }\n    }\n  }];\n}\n\n// Normal path: parse resume from content\nconst resumeMarkdown = (llmResponse.content || '')\n  .trim()\n  .replace(/^```(?:markdown|md)?\\s*\\n?/i, '')\n  .replace(/\\n?```\\s*$/i, '')\n  .trim();\n\nconst errors = [...(llmResponse.errors || [])];\nlet error = null;\n\nif (resumeMarkdown.length <= 100) {\n  errors.push('Resume output suspiciously short or empty');\n  error = {\n    category: 'output_quality',\n    type: 'short_output',\n    message: 'Resume output suspiciously short or empty',\n    provider: llmResponse.provider_used || 'unknown',\n    model: llmResponse.model_used || 'unknown'\n  };\n}\n\nconst success = resumeMarkdown.length > 100;\n\nconsole.log(`[Agent 1] Output: ${resumeMarkdown.length} chars`);\nconsole.log(`[Agent 1] Tokens: ${llmResponse.input_tokens || 0}in + ${llmResponse.output_tokens || 0}out + ${llmResponse.cached_input_tokens || 0}cached + ${llmResponse.cache_write_tokens || 0}cache_write`);\nconsole.log(`[Agent 1] Provider/Model used: ${llmResponse.provider_used}/${llmResponse.model_used}`);\n\nreturn [{\n  json: {\n    success,\n    result: { resume_markdown: resumeMarkdown },\n    tokens: {\n      input: llmResponse.input_tokens || 0,\n      output: llmResponse.output_tokens || 0\n    },\n    cached_input_tokens: llmResponse.cached_input_tokens || 0,\n    cache_write_tokens: llmResponse.cache_write_tokens || 0,\n    model_used: llmResponse.model_used || 'unknown',\n    provider_used: llmResponse.provider_used || 'unknown',\n    errors,\n    error\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        -304
+      ],
+      "id": "ccccc5f9-b3d3-4782-b8c8-99d40cf3cb5c",
+      "name": "Format output"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Agent 1: Resume Builder\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return '';\n  if (typeof val !== 'string') return val;\n  let cleaned = val;\n  while (cleaned.length > 0 && cleaned.charAt(0) === '=') {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\nconst company = strip(trigger.company);\nconst title = strip(trigger.title);\nconst descriptionHtml = strip(trigger.description_html);\nconst masterDoc = strip(trigger.master_doc);\n\nconst provider = strip(config.provider_resume_drafter);\nif (!provider) {\n  throw new Error('[Agent 1] config.provider_resume_drafter is required. Set it in your config sheet (anthropic | openai | gemini).');\n}\n\nconst model = strip(config.model_resume_drafter);\nif (!model) {\n  throw new Error('[Agent 1] config.model_resume_drafter is required. Set it in your config sheet.');\n}\n\nconst maxTokens = Number(config.max_tokens_resume_drafter);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error('[Agent 1] config.max_tokens_resume_drafter is required and must be a number.');\n}\n\nconsole.log(`[Agent 1 Set Inputs] master_doc: ${masterDoc.length} chars, system_prompt: ${systemPrompt.length} chars, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    company,\n    title,\n    description_html: descriptionHtml,\n    master_doc: masterDoc,\n    provider,\n    model,\n    max_tokens: maxTokens\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -304
+      ],
+      "id": "1b46a931-fe88-4b3a-b0cc-e5b0401cf501",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "mxnzrmY5JgwI2DNY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/mxnzrmY5JgwI2DNY",
+          "cachedResultName": "Call LLM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider": "=={{ $json.provider }}",
+            "model": "=={{ $json.model }}",
+            "system": "=={{ $json.system }}",
+            "user_message": "=={{ $json.user_message }}",
+            "max_tokens": "=={{ Number($json.max_tokens) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "model",
+              "displayName": "model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "system",
+              "displayName": "system",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "user_message",
+              "displayName": "user_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "max_tokens",
+              "displayName": "max_tokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        16,
+        -304
+      ],
+      "id": "4f804fa3-7165-4e51-a4a4-a6f3e36057c9",
+      "name": "Call LLM",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "company"
+            },
+            {
+              "name": "title"
+            },
+            {
+              "name": "location"
+            },
+            {
+              "name": "url"
+            },
+            {
+              "name": "description_html"
+            },
+            {
+              "name": "master_doc"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "system_prompt"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -656,
+        -480
+      ],
+      "id": "fddffe4f-78b2-47e0-a341-9378f10d9e57",
+      "name": "Trigger"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Resume Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format output": {
+      "main": [
+        []
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Resume Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM": {
+      "main": [
+        [
+          {
+            "node": "Format output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "83ccc7d3-451c-4585-ab2f-571cae892f50",
+  "activeVersionId": "83ccc7d3-451c-4585-ab2f-571cae892f50",
+  "versionCounter": 341,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-07T01:39:16.078Z",
+      "createdAt": "2026-05-07T01:39:16.078Z",
+      "role": "workflow:owner",
+      "workflowId": "dTZxXzWhdwqFODIU",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 83ccc7d3",
+    "description": ""
+  }
+}

@@ -1,0 +1,341 @@
+{
+  "updatedAt": "2026-06-02T03:13:28.953Z",
+  "createdAt": "2026-05-08T00:49:24.683Z",
+  "id": "i5ASqDFYp6z4mbs4",
+  "name": "Agent 3 - Resume Verifier",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -928,
+        -304
+      ],
+      "id": "219e0406-1b9e-416d-99f7-d5402437163a",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Agent 3: Resume Verifier\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return '';\n  if (typeof val !== 'string') return val;\n  let cleaned = val;\n  while (cleaned.length > 0 && cleaned.charAt(0) === '=') {\n    cleaned = cleaned.substring(1);\n  }\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\nconst company = strip(trigger.company);\nconst title = strip(trigger.title);\nconst descriptionHtml = strip(trigger.description_html);\nconst resumeMarkdown = strip(trigger.resume_markdown);\nconst masterDoc = strip(trigger.master_doc);\n\nconst provider = strip(config.provider_resume_verifier);\nif (!provider) {\n  throw new Error('[Agent 3] config.provider_resume_verifier is required. Set it in your config sheet (anthropic | openai | gemini).');\n}\n\nconst model = strip(config.model_resume_verifier);\nif (!model) {\n  throw new Error('[Agent 3] config.model_resume_verifier is required. Set it in your config sheet.');\n}\n\nconst maxTokens = Number(config.max_tokens_resume_verifier);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error('[Agent 3] config.max_tokens_resume_verifier is required and must be a number.');\n}\n\nconsole.log(`[Agent 3 Set Inputs] resume_markdown: ${resumeMarkdown.length} chars, master_doc: ${masterDoc.length} chars, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    company,\n    title,\n    description_html: descriptionHtml,\n    resume_markdown: resumeMarkdown,\n    master_doc: masterDoc,\n    provider,\n    model,\n    max_tokens: maxTokens\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -304
+      ],
+      "id": "f6111a51-93ef-4cac-aad4-27a8c4b9a2e0",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent 3: format output as standard envelope\n// Mode: Run Once for All Items\n// Robust JSON extraction handles trailing text, code fences, narrative wrapping\n// Propagates structured error from Call LLM on failure.\n\nconst llmResponse = $input.first().json;\n\n// Call LLM failed â€” propagate error without parse attempts on empty content\nif (llmResponse.success === false) {\n  console.log(`[Agent 3] LLM call failed: ${llmResponse.error?.category || 'unknown'} â€” ${llmResponse.error?.message || 'no message'}`);\n  return [{\n    json: {\n      success: false,\n      result: {},\n      tokens: {\n        input: llmResponse.input_tokens || 0,\n        output: llmResponse.output_tokens || 0\n      },\n      cached_input_tokens: llmResponse.cached_input_tokens || 0,\n      cache_write_tokens: llmResponse.cache_write_tokens || 0,\n      model_used: llmResponse.model_used || 'unknown',\n      provider_used: llmResponse.provider_used || 'unknown',\n      errors: [...(llmResponse.errors || [])],\n      error: llmResponse.error || {\n        category: 'unknown',\n        type: 'unknown',\n        message: 'Call LLM returned success: false with no error object',\n        provider: llmResponse.provider_used || 'unknown',\n        model: llmResponse.model_used || 'unknown'\n      }\n    }\n  }];\n}\n\n// Normal path: parse JSON from content\nconst rawContent = (llmResponse.content || '').trim();\n\n// Robust JSON extractor â€” finds first { and walks to matching }\n// Respects string literals and escapes\nconst extractJSON = (text) => {\n  let cleaned = text\n    .replace(/^```(?:json)?\\s*\\n?/i, '')\n    .replace(/\\n?```\\s*$/i, '')\n    .trim();\n\n  try {\n    return JSON.parse(cleaned);\n  } catch (e) {\n    // Fall through to extraction\n  }\n\n  const firstBrace = cleaned.indexOf('{');\n  if (firstBrace === -1) return null;\n\n  let depth = 0;\n  let inString = false;\n  let escape = false;\n  let lastBrace = -1;\n\n  for (let i = firstBrace; i < cleaned.length; i++) {\n    const c = cleaned[i];\n    if (escape) { escape = false; continue; }\n    if (c === '\\\\') { escape = true; continue; }\n    if (c === '\"') { inString = !inString; continue; }\n    if (inString) continue;\n    if (c === '{') depth++;\n    if (c === '}') {\n      depth--;\n      if (depth === 0) {\n        lastBrace = i;\n        break;\n      }\n    }\n  }\n\n  if (lastBrace === -1) return null;\n\n  const jsonStr = cleaned.slice(firstBrace, lastBrace + 1);\n  try {\n    return JSON.parse(jsonStr);\n  } catch (e) {\n    return null;\n  }\n};\n\nlet verdict = null;\nconst parseErrors = [];\n\ntry {\n  verdict = extractJSON(rawContent);\n  if (!verdict) {\n    parseErrors.push(`Could not extract valid JSON from LLM response`);\n    console.log(`[Agent 3] Raw content (first 500 chars):\\n${rawContent.slice(0, 500)}`);\n  }\n} catch (err) {\n  const errMsg = err instanceof Error ? err.message : String(err);\n  parseErrors.push(`Failed to extract JSON: ${errMsg}`);\n  console.log(`[Agent 3] JSON parse failed. Raw content:\\n${rawContent.slice(0, 500)}`);\n}\n\nconst success = verdict !== null;\nconst errors = [...(llmResponse.errors || []), ...parseErrors];\nconst error = success ? null : {\n  category: 'output_quality',\n  type: 'json_parse_failure',\n  message: parseErrors.join('; ') || 'Could not extract valid JSON from LLM response',\n  provider: llmResponse.provider_used || 'unknown',\n  model: llmResponse.model_used || 'unknown'\n};\n\nconsole.log(`[Agent 3] Verdict: ${verdict?.verdict || 'parse failed'}`);\nconsole.log(`[Agent 3] Claims: ${verdict?.supported_count || 0}/${verdict?.claim_count || 0} supported`);\nconsole.log(`[Agent 3] Tokens: ${llmResponse.input_tokens || 0}in + ${llmResponse.output_tokens || 0}out + ${llmResponse.cached_input_tokens || 0}cached + ${llmResponse.cache_write_tokens || 0}cache_write`);\n\nreturn [{\n  json: {\n    success,\n    result: verdict || {},\n    tokens: {\n      input: llmResponse.input_tokens || 0,\n      output: llmResponse.output_tokens || 0\n    },\n    cached_input_tokens: llmResponse.cached_input_tokens || 0,\n    cache_write_tokens: llmResponse.cache_write_tokens || 0,\n    model_used: llmResponse.model_used || 'unknown',\n    provider_used: llmResponse.provider_used || 'unknown',\n    errors,\n    error\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -304
+      ],
+      "id": "6e12afc6-9252-48b7-bcea-c6e941ffe081",
+      "name": "Format Output"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "mxnzrmY5JgwI2DNY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/mxnzrmY5JgwI2DNY",
+          "cachedResultName": "Call LLM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider": "=={{ $json.provider }}",
+            "model": "=={{ $json.model }}",
+            "system": "=={{ $json.system }}",
+            "user_message": "=={{ $json.user_message }}",
+            "max_tokens": "=={{ Number($json.max_tokens) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "model",
+              "displayName": "model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "system",
+              "displayName": "system",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "user_message",
+              "displayName": "user_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "max_tokens",
+              "displayName": "max_tokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -176,
+        -304
+      ],
+      "id": "57f9d402-d934-4bba-ad27-6bbfb1bb3121",
+      "name": "Call LLM",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build Prompt â€” Agent 3: Resume Verifier\n// Persona, verification rules, and severity guidance live in system_prompt (Drive doc).\n// This node injects the OUTPUT CONTRACT (JSON schema + today's date)\n// and the per-job inputs (master_doc + resume_markdown).\n// Severity is reported in full (critical/major/minor); the dashboard decides\n// what to surface vs. collapse. No producer-side severity filtering.\n// Mode: Run Once for Each Item\nconst input = $input.item.json;\nconst resumeMarkdown = input.resume_markdown || '';\nconst masterDoc = input.master_doc || '';\nconst provider = input.provider;\nconst model = input.model;\nconst maxTokens = input.max_tokens;\n// System prompt loaded from Drive doc\nconst systemPromptFromDoc = input.system_prompt || '';\n// Validation\nif (!systemPromptFromDoc || systemPromptFromDoc.length < 100) {\n  throw new Error(`[Agent 3] system_prompt missing or too short (${systemPromptFromDoc.length} chars). Check Prompt Loader output and orchestrator mapping.`);\n}\nif (!masterDoc || masterDoc.length < 100) {\n  throw new Error(`[Agent 3] master_doc missing or too short (${masterDoc.length} chars)`);\n}\nif (!resumeMarkdown || resumeMarkdown.length < 30) {\n  throw new Error(`[Agent 3] resume_markdown missing or too short (${resumeMarkdown.length} chars)`);\n}\nconst today = new Date().toISOString().split('T')[0];\nconsole.log(`[Build Prompt] master_doc: ${masterDoc.length} chars, document: ${resumeMarkdown.length} chars`);\nconsole.log(`[Build Prompt] systemPromptFromDoc: ${systemPromptFromDoc.length} chars`);\n// Pipeline-level output contract â€” JSON schema downstream depends on,\n// today's date for runtime grounding.\nconst OUTPUT_CONTRACT = `# OUTPUT CONTRACT (set by pipeline, do not override)\n\nToday's date is ${today}. Trust the master doc's stated dates; do not assume dates are typos or future fabrications.\n\n## Severity\nAssign every issue an honest severity of \"critical\", \"major\", or \"minor\" per the SEVERITY GUIDANCE in your instructions. Report ALL unsupported claims you find at every severity â€” do not omit minor ones. The unsupported_count must equal the number of items in the issues array.\n\n## Output JSON schema\nReturn ONLY valid JSON, no markdown wrapping, no preamble. Use this exact shape:\n\n{\n  \"verdict\": \"clean\" or \"hallucinations_found\",\n  \"summary\": \"<one-sentence overview>\",\n  \"claim_count\": <integer total claims checked>,\n  \"supported_count\": <integer>,\n  \"unsupported_count\": <integer>,\n  \"issues\": [\n    {\n      \"section\": \"tagline\" or \"summary\" or \"experience\" or \"skills\",\n      \"company\": \"<company name if applicable, else empty string>\",\n      \"claim\": \"<verbatim text from resume>\",\n      \"issue_type\": \"fabricated_skill\" or \"fabricated_metric\" or \"fabricated_role\" or \"fabricated_domain\" or \"modified_tagline\" or \"other\",\n      \"severity\": \"critical\" or \"major\" or \"minor\",\n      \"explanation\": \"<one-sentence explanation of why this isn't supported>\"\n    }\n  ]\n}\n\nList issues in severity order: all critical first, then major, then minor.\n\nIf everything is clean, return:\n{\n  \"verdict\": \"clean\",\n  \"summary\": \"All claims supported by master career document.\",\n  \"claim_count\": <N>,\n  \"supported_count\": <N>,\n  \"unsupported_count\": 0,\n  \"issues\": []\n}`;\nconst system = systemPromptFromDoc + '\\n\\n' + OUTPUT_CONTRACT;\nconst userMessage = `Examine the resume below for fabrication. Compare every claim against the master career document.\n\n# CANDIDATE'S MASTER CAREER DOCUMENT (ground truth)\n\n${masterDoc}\n\n# GENERATED RESUME TO VERIFY\n\n${resumeMarkdown}`;\nconsole.log(`[Build Prompt] Final system: ${system.length} chars, user: ${userMessage.length} chars`);\nreturn {\n  json: {\n    provider,\n    model,\n    system,\n    user_message: userMessage,\n    max_tokens: maxTokens,\n    prompt_chars: system.length + userMessage.length\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        -304
+      ],
+      "id": "2396de9a-3c7f-4e41-9880-062d21d2c796",
+      "name": "Build Prompt"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "resume_markdown"
+            },
+            {
+              "name": "master_doc"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "system_prompt"
+            },
+            {
+              "name": "cascade_error",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -928,
+        -480
+      ],
+      "id": "fe0fb754-524c-4b6e-8748-4f8a30d5d8c2",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "31b3d6b2-633e-4b74-9d24-62afc0bbfc3f",
+              "leftValue": "={{ $json.cascade_error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -720,
+        -432
+      ],
+      "id": "e0a7c088-73e4-4141-9426-fed0e1cdf933",
+      "name": "Cascade"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Cascade Output â€” Agent 3\n// Mode: Run Once for All Items\n// Fires when upstream agent failed (cascade_error present in trigger payload).\n// Short-circuits without LLM call. Returns standard envelope matching Format Output's failure shape.\n\nconst trigger = $('Trigger').first().json;\nconst upstreamError = trigger.cascade_error || {};\nconst sourceAgent = upstreamError.source_agent || 'upstream';\n\nconsole.log(`[Agent 3] CASCADE â€” skipping due to ${sourceAgent}: ${upstreamError.category || 'unknown'} â€” ${upstreamError.message || 'no message'}`);\n\nreturn [{\n  json: {\n    success: false,\n    result: {},\n    tokens: { input: 0, output: 0 },\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: 'skipped',\n    provider_used: 'skipped',\n    errors: [`upstream_failure: ${sourceAgent}:${upstreamError.category || 'unknown'}`],\n    error: {\n      category: 'upstream_failure',\n      type: 'cascade',\n      message: `Skipped due to ${sourceAgent} failure: ${upstreamError.message || 'no message'}`,\n      source_agent: 'agent_3',\n      upstream_error: upstreamError,\n      provider: 'skipped',\n      model: 'skipped'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        -528
+      ],
+      "id": "3004abea-f962-46ce-b3be-020013b4b09f",
+      "name": "Build Cascade Output"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Cascade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Cascade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cascade": {
+      "main": [
+        [
+          {
+            "node": "Build Cascade Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "4f4abbe6-7ac7-4ad1-b8ad-eb7c48d94934",
+  "activeVersionId": "4f4abbe6-7ac7-4ad1-b8ad-eb7c48d94934",
+  "versionCounter": 276,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-08T00:49:24.686Z",
+      "createdAt": "2026-05-08T00:49:24.686Z",
+      "role": "workflow:owner",
+      "workflowId": "i5ASqDFYp6z4mbs4",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 4f4abbe6",
+    "description": ""
+  }
+}

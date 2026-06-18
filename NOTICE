@@ -1,0 +1,30 @@
+Maestro AI
+Copyright (c) 2026 Neda Parnian (operating as Parseus AI)
+
+This product is licensed under the Elastic License 2.0 (see LICENSE).
+
+You may use, copy, modify, and self-host Maestro AI free of charge. You may not
+provide it to third parties as a hosted or managed service, and you may not
+remove or obscure the licensing and copyright notices. Use of any Parseus AI
+trademarks is subject to applicable law.
+
+Using Maestro requires your own accounts and keys (Google and an AI provider).
+The AI calls Maestro makes are billed to you by your provider.
+
+---
+
+Third-party components
+
+Maestro orchestrates its backend on n8n, which is not part of this repository
+and is not redistributed here. The provided docker-compose configuration pulls
+the official n8n image at runtime. n8n is licensed by n8n GmbH under the n8n
+Sustainable Use License and, for some components, the n8n Enterprise License.
+Your use of n8n is governed by those licenses, not by this one. See
+https://github.com/n8n-io/n8n for details.
+
+The Maestro dashboard is distributed as a prebuilt container image. Its source
+is not included in this repository.
+
+This NOTICE file is provided for informational purposes. Parseus AI is not yet a
+registered legal entity; copyright is currently held by Neda Parnian and will be
+assigned to Parseus AI upon its registration.

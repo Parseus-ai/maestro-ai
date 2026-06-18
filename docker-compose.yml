@@ -1,0 +1,90 @@
+# Maestro AI — full stack (n8n engine + workflow importer + dashboard)
+#
+# Quick start:
+#   1. Copy .env.example to .env and fill in the values.
+#   2. docker compose up -d
+#   3. Open the dashboard at http://localhost:4400
+#      (n8n is at http://localhost:5678 if you need it)
+#
+# Services:
+#   n8n          - the workflow engine (stock image)
+#   n8n-importer - one-shot sidecar; seeds the workflows into n8n on first
+#                  boot, then exits. Idempotent (sentinel on the n8n volume).
+#   dashboard    - the Maestro web app (prebuilt image from GHCR)
+#
+# The project name is pinned to "maestro-ai" so the named data volume
+# persists across restarts.
+
+name: maestro-ai
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: maestro-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # --- Basic auth: CHANGE THESE before first start --------------
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: "${N8N_BASIC_AUTH_USER:-admin}"
+      N8N_BASIC_AUTH_PASSWORD: "${N8N_BASIC_AUTH_PASSWORD:?set N8N_BASIC_AUTH_PASSWORD in .env}"
+      # -------------------------------------------------------------
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      # Google Drive folder where the pipeline creates per-job folders.
+      ROOT_FOLDER_ID: "${ROOT_FOLDER_ID:?set ROOT_FOLDER_ID in .env}"
+      # Allow workflow nodes to read these env vars at runtime.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      GENERIC_TIMEZONE: "${GENERIC_TIMEZONE:-America/Los_Angeles}"
+      TZ: "${GENERIC_TIMEZONE:-America/Los_Angeles}"
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_HIRING_BANNER_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  n8n-importer:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: maestro-n8n-importer
+    # One-shot: seeds workflows then exits. Do NOT restart.
+    restart: "no"
+    depends_on:
+      - n8n
+    # Run our import script instead of the n8n server.
+    entrypoint: ["/bin/sh", "/import-workflows.sh"]
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      - ./import-workflows.sh:/import-workflows.sh:ro
+
+  dashboard:
+    image: ghcr.io/parseus-ai/maestro-ai-frontend:latest
+    container_name: maestro-dashboard
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    ports:
+      - "${DASHBOARD_PORT:-4400}:4400"
+    environment:
+      # --- Google Sheets (service account) -------------------------
+      GOOGLE_SHEETS_CLIENT_EMAIL: "${GOOGLE_SHEETS_CLIENT_EMAIL:?set in .env}"
+      GOOGLE_SHEETS_PRIVATE_KEY: "${GOOGLE_SHEETS_PRIVATE_KEY:?set in .env}"
+      GOOGLE_SHEETS_DATABASE_ID: "${GOOGLE_SHEETS_DATABASE_ID:?set in .env}"
+      # --- Google Drive (OAuth2 as user) ---------------------------
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:?set in .env}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:?set in .env}"
+      GOOGLE_OAUTH_REFRESH_TOKEN: "${GOOGLE_OAUTH_REFRESH_TOKEN:?set in .env}"
+      GOOGLE_RESUMES_PARENT_ID: "${GOOGLE_RESUMES_PARENT_ID:-}"
+      # --- n8n webhook wiring (cross-container: use the service name) -
+      N8N_WEBHOOK_BASE_URL: "${N8N_WEBHOOK_BASE_URL:-http://n8n:5678/webhook}"
+      MAESTRO_WEBHOOK_SECRET: "${MAESTRO_WEBHOOK_SECRET:?set in .env}"
+
+volumes:
+  n8n_data:
+    name: maestro_n8n_data

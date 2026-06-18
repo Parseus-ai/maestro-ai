@@ -1,0 +1,235 @@
+{
+  "updatedAt": "2026-05-29T00:28:39.079Z",
+  "createdAt": "2026-05-16T04:48:10.685Z",
+  "id": "wPnJrM4C4I3TpsZE",
+  "name": "Lever Source",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -368,
+        -48
+      ],
+      "id": "22dc9e66-055c-4311-9121-dd638b126a44",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "watchlist",
+              "type": "array"
+            },
+            {
+              "name": "run_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -240
+      ],
+      "id": "d7927491-d5f5-4bcb-99d9-4794f90e34b8",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Run Once for Each Item â€” n8n auto-splits Lever's top-level array\nconst posting = $input.item.json;\nconst company = $('Set Inputs').item.json;\n\nif (posting?.error || !posting?.text) {\n  return [];\n}\n\nconst decodeEntities = (s) => String(s || '')\n  .replace(/&amp;/g, '&')\n  .replace(/&nbsp;/g, ' ')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#39;/g, \"'\")\n  .replace(/&#x27;/g, \"'\");\n\nconst stripHtml = (html) => decodeEntities(html)\n  .replace(/<[^>]*>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst isRemote = (p) => {\n  const wp = String(p.workplaceType || '').toLowerCase();\n  if (wp === 'remote') return true;\n  const loc = String(p.categories?.location || '').toLowerCase();\n  if (loc.includes('remote')) return true;\n  const allLocs = Array.isArray(p.categories?.allLocations) ? p.categories.allLocations : [];\n  return allLocs.some(l => String(l).toLowerCase().includes('remote'));\n};\n\nconst normalizeEmploymentType = (commitment) =>\n  String(commitment || '').toUpperCase().replace(/[-\\s]/g, '');\n\nconst toIsoFromMs = (ms) => {\n  if (!ms) return '';\n  const d = new Date(Number(ms));\n  return isNaN(d.getTime()) ? '' : d.toISOString();\n};\n\n// Lever splits JD content across description + lists + additional\nconst buildHtml = (p) => {\n  const parts = [];\n  if (p.description) parts.push(p.description);\n  if (Array.isArray(p.lists)) {\n    for (const list of p.lists) {\n      const heading = list.text ? `<h3>${list.text}</h3>` : '';\n      const body = list.content ? `<ul>${list.content}</ul>` : '';\n      if (heading || body) parts.push(heading + body);\n    }\n  }\n  if (p.additional) parts.push(p.additional);\n  return decodeEntities(parts.join('\\n'));\n};\n\nconst buildPlainText = (p) => {\n  const parts = [];\n  if (p.descriptionPlain) parts.push(p.descriptionPlain);\n  else if (p.description) parts.push(stripHtml(p.description));\n  if (Array.isArray(p.lists)) {\n    for (const list of p.lists) {\n      if (list.text) parts.push(list.text);\n      if (list.content) parts.push(stripHtml(list.content));\n    }\n  }\n  if (p.additionalPlain) parts.push(p.additionalPlain);\n  else if (p.additional) parts.push(stripHtml(p.additional));\n  return parts.join(' ').replace(/\\s+/g, ' ').trim();\n};\n\nconst categories = posting.categories || {};\nconst allLocs = Array.isArray(categories.allLocations) ? categories.allLocations : [];\nconst location = String(categories.location || allLocs[0] || '').trim();\n\nreturn {\n  json: {\n    _type: 'job',\n    company: company.company_name,\n    title: String(posting.text || '').trim(),\n    url: String(posting.hostedUrl || posting.applyUrl || '').trim(),\n    description_html: buildHtml(posting),\n    description: buildPlainText(posting),\n    location: location,\n    remote: isRemote(posting),\n    salary_text: '',\n    employment_type: normalizeEmploymentType(categories.commitment),\n    source: 'lever',\n    posted_at: toIsoFromMs(posting.createdAt)\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -208
+      ],
+      "id": "cbc16ae9-a5e8-402f-9792-af56f3754a4b",
+      "name": "Parse and Normalize"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Trigger').first().json.config || {};\nconst watchlist = $('Trigger').first().json.watchlist || [];\n\nconst orderRaw = config.discovery_fetcher_order || '';\nconst enabledSources = String(orderRaw)\n  .split(/[;,]/)\n  .map(s => s.trim().toLowerCase())\n  .filter(s => s.length > 0);\n\nif (!enabledSources.includes('lever')) {\n  console.log('[Lever] Disabled via discovery_fetcher_order â€” skipping');\n  return [];\n}\n\nconst thresholdRaw = Number(config.discovery_priority_threshold);\nconst priorityThreshold = isNaN(thresholdRaw) ? 999 : thresholdRaw;\n\nconst companies = watchlist\n  .filter(c => {\n    if (!c) return false;\n    if (String(c.lever_slug || '').trim().length === 0) return false;\n    const p = Number(c.priority);\n    const priority = isNaN(p) ? 999 : p;\n    return priority <= priorityThreshold;\n  })\n  .map(c => ({\n    company_name: String(c.company_name || '').trim(),\n    slug: String(c.lever_slug || '').trim()\n  }));\n\nif (companies.length === 0) {\n  console.log(`[Lever] No companies match priority <= ${priorityThreshold} with lever_slug â€” skipping`);\n  return [];\n}\n\nconsole.log(`[Lever] Fetching ${companies.length} boards (priority <= ${priorityThreshold})`);\nreturn companies.map(c => ({ json: c }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -112
+      ],
+      "id": "9993439a-e6d0-4705-93c5-944715edadcd",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.lever.co/v0/postings/{{ $json.slug }}?mode=json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        -112
+      ],
+      "id": "ccab4622-82d8-495b-8b01-5166aca140ad",
+      "name": "Lever Fetcher",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const company = $('Set Inputs').item.json;\nconst runId = $('Trigger').first().json.run_id || '';\nconst errPayload = $input.first().json || {};\nconst errObj = errPayload.error || {};\n\nconst statusCode = String(\n  errObj.httpCode ||\n  errObj.status ||\n  errObj.cause?.response?.status ||\n  ''\n);\nconst message = String(errObj.message || 'Unknown error').substring(0, 500);\n\nconsole.log(`[Lever] Fetch failed for ${company.company_name} (${company.slug}): ${statusCode} ${message}`);\n\nreturn [{\n  json: {\n    _type: 'failure',\n    run_id: runId,\n    discovered_at: new Date().toISOString(),\n    source: 'lever',\n    company: company.company_name || '',\n    slug: company.slug || '',\n    status_code: statusCode,\n    error_message: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        -16
+      ],
+      "id": "9e62b400-fea6-4a9e-b044-67488080a89e",
+      "name": "Build Error Response"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        576,
+        -144
+      ],
+      "id": "0e15390f-aebf-49a1-9086-f5a27f424bc8",
+      "name": "Merge"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Lever Fetcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lever Fetcher": {
+      "main": [
+        [
+          {
+            "node": "Parse and Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Normalize": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "164d8377-9b73-4d31-837b-5da2cc002120",
+  "activeVersionId": "164d8377-9b73-4d31-837b-5da2cc002120",
+  "versionCounter": 92,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-16T04:48:10.687Z",
+      "createdAt": "2026-05-16T04:48:10.687Z",
+      "role": "workflow:owner",
+      "workflowId": "wPnJrM4C4I3TpsZE",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 164d8377",
+    "description": ""
+  }
+}

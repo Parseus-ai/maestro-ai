@@ -1,0 +1,234 @@
+{
+  "updatedAt": "2026-05-29T02:15:05.594Z",
+  "createdAt": "2026-05-16T02:00:14.513Z",
+  "id": "Nadqyh6bW97g7LmB",
+  "name": "Greenhouse Source",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -368,
+        -48
+      ],
+      "id": "e7ee1fd6-e9b4-40dc-a24f-8844138029d2",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "watchlist",
+              "type": "array"
+            },
+            {
+              "name": "run_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -240
+      ],
+      "id": "eb1571f9-15a4-4de5-a1e7-98962aa1651f",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mode: Run Once for All Items\n// Iterates over every Greenhouse Fetcher response, pairs each with its source\n// company via pairedItem (robust against per-item ordering changes), and emits\n// one item per job. Empty company boards contribute zero items, which is fine.\n\nconst responses = $input.all();\nconst companies = $('Set Inputs').all().map(i => i.json);\n\nconst decodeEntities = (s) => String(s || '')\n  .replace(/&amp;/g, '&')\n  .replace(/&nbsp;/g, ' ')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#39;/g, \"'\")\n  .replace(/&#x27;/g, \"'\");\n\nconst stripHtml = (html) => decodeEntities(html)\n  .replace(/<[^>]*>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst isRemote = (job) => {\n  const loc = String(job?.location?.name || '').toLowerCase();\n  return loc.includes('remote');\n};\n\nconst allNormalized = [];\n\nfor (const inp of responses) {\n  const response = inp.json || {};\n  // Pair this response with its source company via pairedItem.\n  // Falls back to index 0 if pairedItem is missing (shouldn't happen from HTTP).\n  const sourceIdx = inp.pairedItem?.item ?? 0;\n  const company = companies[sourceIdx] || {};\n\n  const jobs = Array.isArray(response.jobs) ? response.jobs : [];\n\n  const normalized = jobs.map(job => ({\n    company: company.company_name || '',\n    title: String(job.title || '').trim(),\n    url: String(job.absolute_url || '').trim(),\n    description_html: decodeEntities(job.content),\n    description: stripHtml(job.content),\n    location: String(job.location?.name || '').trim(),\n    remote: isRemote(job),\n    salary_text: '',\n    employment_type: '',\n    source: 'greenhouse',\n    posted_at: job.updated_at || job.first_published_at || ''\n  }));\n\n  console.log(`[Greenhouse Parse] ${company.company_name || '(unknown)'} (${company.slug || '?'}): ${jobs.length} raw, ${normalized.length} normalized`);\n\n  for (const j of normalized) allNormalized.push(j);\n}\n\nconsole.log(`[Greenhouse Parse] total: ${responses.length} boards â†’ ${allNormalized.length} jobs`);\n\nreturn allNormalized.map(j => ({ json: { ...j, _type: 'job' } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -176
+      ],
+      "id": "beab1b77-1c0d-4228-9658-b0c7a88731b6",
+      "name": "Parse and Normalize"
+    },
+    {
+      "parameters": {
+        "url": "=https://boards-api.greenhouse.io/v1/boards/{{ $json.slug }}/jobs?content=true",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        -112
+      ],
+      "id": "e9ea9b4c-f6cd-435e-973e-f40020a82145",
+      "name": "Greenhouse Fetcher",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Trigger').first().json.config || {};\nconst watchlist = $('Trigger').first().json.watchlist || [];\n\nconst orderRaw = config.discovery_fetcher_order || '';\nconst enabledSources = String(orderRaw)\n  .split(/[;,]/)\n  .map(s => s.trim().toLowerCase())\n  .filter(s => s.length > 0);\n\nif (!enabledSources.includes('greenhouse')) {\n  console.log('[Greenhouse] Disabled via discovery_fetcher_order â€” skipping');\n  return [];\n}\n\nconst thresholdRaw = Number(config.discovery_priority_threshold);\nconst priorityThreshold = isNaN(thresholdRaw) ? 999 : thresholdRaw;\n\nconst companies = watchlist\n  .filter(c => {\n    if (!c) return false;\n    if (String(c.greenhouse_slug || '').trim().length === 0) return false;\n    const p = Number(c.priority);\n    const priority = isNaN(p) ? 999 : p;\n    return priority <= priorityThreshold;\n  })\n  .map(c => ({\n    company_name: String(c.company_name || '').trim(),\n    slug: String(c.greenhouse_slug || '').trim()\n  }));\n\nif (companies.length === 0) {\n  console.log(`[Greenhouse] No companies match priority <= ${priorityThreshold} with greenhouse_slug â€” skipping`);\n  return [];\n}\n\nconsole.log(`[Greenhouse] Fetching ${companies.length} boards (priority <= ${priorityThreshold})`);\nreturn companies.map(c => ({ json: c }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -112
+      ],
+      "id": "b0e8c1c5-ce58-4123-b758-bfd8bbefe12c",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const company = $('Set Inputs').item.json;\nconst runId = $('Trigger').first().json.run_id || '';\nconst errPayload = $input.first().json || {};\nconst errObj = errPayload.error || {};\n\nconst statusCode = String(\n  errObj.httpCode ||\n  errObj.status ||\n  errObj.cause?.response?.status ||\n  ''\n);\nconst message = String(errObj.message || 'Unknown error').substring(0, 500);\n\nconsole.log(`[Greenhouse] Fetch failed for ${company.company_name} (${company.slug}): ${statusCode} ${message}`);\n\nreturn [{\n  json: {\n    _type: 'failure',\n    run_id: runId,\n    discovered_at: new Date().toISOString(),\n    source: 'greenhouse',\n    company: company.company_name || '',\n    slug: company.slug || '',\n    status_code: statusCode,\n    error_message: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        0
+      ],
+      "id": "d8e73d69-8190-453a-a57c-809093f5f152",
+      "name": "Build Error Response"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        560,
+        -128
+      ],
+      "id": "69f5d025-d1e5-4564-b883-be2fadefe5e1",
+      "name": "Merge"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Greenhouse Fetcher": {
+      "main": [
+        [
+          {
+            "node": "Parse and Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Greenhouse Fetcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse and Normalize": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "b94da424-1318-4071-9574-44d9bc0a772a",
+  "activeVersionId": "b94da424-1318-4071-9574-44d9bc0a772a",
+  "versionCounter": 114,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-16T02:00:14.516Z",
+      "createdAt": "2026-05-16T02:00:14.516Z",
+      "role": "workflow:owner",
+      "workflowId": "Nadqyh6bW97g7LmB",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version b94da424",
+    "description": ""
+  }
+}

@@ -1,0 +1,172 @@
+{
+  "updatedAt": "2026-06-07T02:25:43.950Z",
+  "createdAt": "2026-05-17T23:22:51.518Z",
+  "id": "9rlUL4FZMryuvHKI",
+  "name": "Model Usage Recorder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "9fdad7fb-a95c-4ae4-89b2-6eb1d6042ac6",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "job_result",
+              "type": "object"
+            },
+            {
+              "name": "database_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        -144
+      ],
+      "id": "04527e71-9027-434f-9e92-913d530fc241",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Model Usage Rows\n// Mode: Run Once for All Items\n// Emits one row per agent that exists in the CALLING workflow, with status\n// indicating execution state. We do NOT pad with agents from other workflows\n// (a refinement run never emits discovery/application-only agents).\nconst jobResult = $input.first().json.job_result || {};\nconst generatedAt = new Date().toISOString();\n\n// Run identity precedence: this-run's own run_id FIRST, application_run_id only\n// as a fallback for the application path (which sets application_run_id but no\n// top-level run_id). Refinement sets run_id='refine_*' AND application_run_id=\n// 'app_*' (an FK to the parent run) â€” reading application_run_id first here\n// mis-detected refinement runs as application runs. run_id is this run's identity.\nconst runId = jobResult.run_id || jobResult.application_run_id || '';\nconst runType = runId.startsWith('app_') ? 'application' :\n                runId.startsWith('disc_') ? 'discovery' :\n                runId.startsWith('refine_') ? 'refinement' :\n                runId.startsWith('cl_') ? 'cover_letter' : 'unknown';\n\n// job_id: present on application + refinement runs. Blank by design on discovery\n// (scoring happens before job_id is minted in Build Discovery Row).\nconst jobId = (runType === 'discovery') ? '' : (jobResult.job?.job_id || '');\n\nlet agents = [];\n\nif (runType === 'application') {\n  agents = [\n    { name: 'agent_1', sub: jobResult.resume },\n    { name: 'agent_2', sub: jobResult.cover_letter },\n    { name: 'agent_3', sub: jobResult.verifier },\n    { name: 'agent_4', sub: jobResult.cover_verifier },\n    { name: 'agent_5', sub: jobResult.critic },\n    { name: 'agent_7', sub: jobResult.scorer }\n  ];\n} else if (runType === 'refinement') {\n  // Refiner workflow. Polish â†’ Agent 6; Refine â†’ Agent 9. Plus optional verifier + scorer.\n  const refinerAgent = (jobResult.mode === 'polish') ? 'agent_6' : 'agent_9';\n  agents = [\n    { name: refinerAgent, sub: jobResult.refiner },\n    { name: 'agent_3', sub: jobResult.verifier },\n    { name: 'agent_7', sub: jobResult.scorer }\n  ];\n} else if (runType === 'discovery') {\n  // jobResult here is the wrapper built by Job_Discovery's Model Usage Recorder\n  // input mapping: { scored_jobs: [...], agent_10_usage: {...}|null, run_id }.\n  //\n  // Agent 10 (Job Ranker) â€” one row per run, regardless of result count.\n  agents.push({ name: 'agent_10', sub: jobResult.agent_10_usage || null });\n\n  // Agent 8 (Discovery Scorer) â€” one row per scored job. On the false branch\n  // (zero jobs through the ranker), scored_jobs is [] and we emit one\n  // \"disabled\" agent_8 row so every run has a complete agent picture.\n  // Each scored_job carries model_used / tokens / cost at the top level,\n  // already matching the shape classify/buildRow expect.\n  const a8List = Array.isArray(jobResult.scored_jobs) ? jobResult.scored_jobs : [];\n  if (a8List.length === 0) {\n    agents.push({ name: 'agent_8', sub: null });\n  } else {\n    for (const s of a8List) agents.push({ name: 'agent_8', sub: s });\n  }\n} else if (runType === 'cover_letter') {\n  // Cover Letter Generation/Refinement workflow.\n  // Generate â†’ Agent 2; Refine â†’ Agent 11. Plus optional verifier (Agent 4).\n  const buildAgent = (jobResult.mode === 'generate') ? 'agent_2' : 'agent_11';\n  agents = [\n    { name: buildAgent, sub: jobResult.cover_letter },\n    { name: 'agent_4', sub: jobResult.cover_verifier }\n  ];\n} else {\n  throw new Error(`[Model Usage Recorder] Unknown run_id prefix â€” cannot classify run '${runId}'. Expected app_/disc_/refine_/cl_.`);\n}\n\nconst classify = (sub) => {\n  if (!sub) return 'disabled';\n  // Agents with an explicit `ran` flag â€” honor it\n  if (sub.ran === false) return 'disabled';\n  if (sub.cascaded === true) return 'cascaded';\n  const m = sub.model_used;\n  if (!m || m === 'skipped' || m === 'crash' || m === 'unknown') return 'failed';\n  return 'ran';\n};\n\nconst rows = [];\nfor (const a of agents) {\n  const status = classify(a.sub);\n  const model = (status === 'ran') ? a.sub.model_used : '';\n  const provider = (status === 'ran') ? (a.sub.provider_used || '') : '';\n  // Preserve tokens/cost on ALL non-disabled statuses.\n  // Cascade and failed runs still burn tokens before the decision.\n  const tokensIn   = (status === 'disabled') ? 0 : (a.sub?.tokens?.input || 0);\n  const tokensOut  = (status === 'disabled') ? 0 : (a.sub?.tokens?.output || 0);\n  const cachedIn   = (status === 'disabled') ? 0 : (a.sub?.cached_input_tokens || 0);\n  const cacheWrite = (status === 'disabled') ? 0 : (a.sub?.cache_write_tokens || 0);\n  const costUsd    = (status === 'disabled') ? 0 : Number((a.sub?.cost || 0).toFixed(6));\n  rows.push({\n    json: {\n      run_id: runId,\n      job_id: jobId,\n      agent_name: a.name,\n      status,\n      provider,\n      model_used: model,\n      generated_at: generatedAt,\n      tokens_in: tokensIn,\n      tokens_out: tokensOut,\n      cached_input_tokens: cachedIn,\n      cache_write_tokens: cacheWrite,\n      cost_usd: costUsd\n    }\n  });\n}\n\nconsole.log(`[Model Usage Recorder] run_id=${runId}, job_id=${jobId || '(none)'}, run_type=${runType}, emitting ${rows.length} row(s): ${rows.map(r => r.json.agent_name + '=' + r.json.status).join(', ')}`);\n\nreturn rows;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        0
+      ],
+      "id": "de27f8d1-424d-4656-9a53-b94445d80226",
+      "name": "Build Model Usage Row"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "model_usage",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        64,
+        0
+      ],
+      "id": "4e522b26-6748-4197-bd0f-4ea428186536",
+      "name": "Append row in sheet",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Model Usage Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Build Model Usage Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Model Usage Row": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "4dc56e99-8914-4301-b1e3-35101c6e2321",
+  "activeVersionId": "4dc56e99-8914-4301-b1e3-35101c6e2321",
+  "versionCounter": 106,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-17T23:22:51.520Z",
+      "createdAt": "2026-05-17T23:22:51.520Z",
+      "role": "workflow:owner",
+      "workflowId": "9rlUL4FZMryuvHKI",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 4dc56e99",
+    "description": ""
+  }
+}

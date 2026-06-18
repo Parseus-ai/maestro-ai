@@ -1,0 +1,551 @@
+{
+  "updatedAt": "2026-06-07T02:29:55.733Z",
+  "createdAt": "2026-05-13T23:38:39.690Z",
+  "id": "cpkOoZXkF0E55IYP",
+  "name": "Data Loader",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Mode-aware filter.\n// application: build exactly the jobs whose job_id is in the run's payload list (job_ids).\n//   Selection is per-run and explicit, passed in from the orchestrator's webhook body.\n//   processed_status is NOT used for selection (it's display-only now), so overlapping\n//   or repeat runs can't collide â€” each run builds only the ids it was handed.\n// discovery: existing job URLs + existing (company,title,date) role keys for dedup.\n//\n// \"Always Output Data\" is ON for this node so an empty jobs sheet (Load Jobs returns\n// nothing) still produces the discovery summary item with empty arrays, rather than\n// n8n marking the node \"didn't execute\" and breaking downstream $('Filter Jobs') refs.\n\nconst mode = String($('Trigger').first().json.mode || 'application').toLowerCase().trim();\nconst allJobs = $input.all();\n\n// company || title || YYYY-MM-DD (date only; undated -> trailing empty slot).\n// MUST stay byte-identical to the same helper in Job Post Processing > Dedup.\nconst roleKey = (company, title, postedAt) => {\n  const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();\n  const c = norm(company);\n  const t = norm(title);\n  if (!c || !t) return '';\n  let d = '';\n  const s = String(postedAt || '').trim();\n  if (s) {\n    const m = s.match(/^(\\d{4}-\\d{2}-\\d{2})/);\n    if (m) d = m[1];\n    else { const dt = new Date(s); d = isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10); }\n  }\n  return `${c}||${t}||${d}`;\n};\n\nif (mode === 'discovery') {\n  // Tolerate empty Load Jobs (new database, no rows yet). Empty arrays are the\n  // correct semantic answer: no prior URLs/roles to dedup against.\n  const urls = allJobs\n    .map(item => (item && item.json) ? item.json.url : null)\n    .filter(url => !!url);\n  const roles = [...new Set(\n    allJobs\n      .map(item => (item && item.json) ? roleKey(item.json.company, item.json.title, item.json.posted_at) : '')\n      .filter(Boolean)\n  )];\n  console.log(`[Filter Jobs] mode=discovery, input rows=${allJobs.length}, returning ${urls.length} existing URLs, ${roles.length} existing role keys`);\n  return [{ json: { existing_job_urls: urls, existing_job_roles: roles } }];\n}\n\n// mode=application: select by explicit job_ids from the payload.\nlet requested = $('Trigger').first().json.job_ids;\n\n// Normalize: accept array, JSON string, or comma-separated string.\nif (typeof requested === 'string') {\n  const raw = requested.trim();\n  if (raw.startsWith('[')) {\n    try { requested = JSON.parse(raw); } catch (e) { requested = raw.split(','); }\n  } else {\n    requested = raw ? raw.split(',') : [];\n  }\n}\nif (!Array.isArray(requested)) requested = [];\nconst wanted = new Set(requested.map(id => String(id).trim()).filter(Boolean));\n\nif (wanted.size === 0) {\n  console.log('[Filter Jobs] mode=application, no job_ids in payload â€” selecting nothing.');\n  return [];\n}\n\nconst selected = allJobs.filter(item => {\n  const j = item && item.json;\n  return j && wanted.has(String(j.job_id ?? '').trim());\n});\n\nconst foundIds = new Set(selected.map(item => String(item.json.job_id).trim()));\nconst missing = [...wanted].filter(id => !foundIds.has(id));\nif (missing.length) {\n  console.log(`[Filter Jobs] WARNING: ${missing.length} requested job_id(s) not found: ${missing.join(', ')}`);\n}\n\nconsole.log(`[Filter Jobs] mode=application, requested: ${wanted.size}, selected: ${selected.length}`);\nselected.forEach((item, idx) => {\n  const j = item.json;\n  console.log(`  ${idx + 1}. [${j.job_id}] [${j.company}] ${j.title}`);\n});\n\nreturn selected;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -144
+      ],
+      "id": "8ba82ac7-60a7-46c8-9c1a-057961d55830",
+      "name": "Filter Jobs",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Resolve File IDs').first().json.master_doc_id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -64,
+        336
+      ],
+      "id": "fdf45302-8a0e-4f27-be62-3371ef7fc204",
+      "name": "Read Master Doc",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        144,
+        336
+      ],
+      "id": "c6624849-3aa3-492e-b7ae-3e86b25238c9",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates the master career doc has substantive content.\n\nconst text = $input.first()?.json?.data || $input.first()?.json?.text || '';\n\nif (!text || text.length < 500) {\n  throw new Error(\n    `[Verify Master Doc] Master career doc is empty or too short (${text.length} chars). ` +\n    `Expected at least 500 chars of career history.`\n  );\n}\n\nconsole.log(`[Verify Master Doc] OK â€” ${text.length} chars`);\n\nreturn [{ json: { master_doc: text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        336
+      ],
+      "id": "f5231bec-aa77-438e-bc69-181c6a15d6b9",
+      "name": "Verify Master Doc"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve File IDs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -64,
+        16
+      ],
+      "id": "1f5210c9-44e2-4ac4-9c39-986aa5b889e5",
+      "name": "Read Config",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregates config sheet rows into a single Object keyed by Parameter name.\n\nconst stripEquals = (val) => {\n  if (typeof val !== 'string') return val;\n  return val.startsWith('=') ? val.substring(1) : val;\n};\n\nconst rows = $input.all().map(i => i.json);\nconst config = {};\n\nrows.forEach(row => {\n  const param = (row.Parameter ?? row.parameter ?? '').toString().trim();\n  let value = row.Value !== undefined ? row.Value : row.value;\n  value = stripEquals(value);\n  if (param) {\n    config[param] = value;\n  }\n});\n\nconsole.log(`[Parse Config] Loaded ${Object.keys(config).length} config values`);\n\nreturn [{ json: { config } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        16
+      ],
+      "id": "f86672d1-4d2c-4796-9f8b-e372efb89e8a",
+      "name": "Parse Config"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Data Loader â€” find Master Career Document and database in root folder by name.\n// Matches by name only (names must be unique inside the root folder).\n\nconst items = $input.all().map(i => i.json);\n\nconst findOne = (name) => {\n  const matches = items.filter(i => i.name === name);\n  if (matches.length === 0) {\n    const available = items.length\n      ? items.map(i => `  - \"${i.name}\"`).join('\\n')\n      : '  (folder is empty or list call returned nothing)';\n    throw new Error(\n      `[Data Loader] Could not find \"${name}\" in root folder.\\n` +\n      `Available items:\\n${available}`\n    );\n  }\n  if (matches.length > 1) {\n    throw new Error(\n      `[Data Loader] Multiple items named \"${name}\" found. Names must be unique in root folder.`\n    );\n  }\n  return matches[0].id;\n};\n\nconst master_doc_id = findOne('Master Career Document');\nconst database_id = findOne('Database');\n\nconsole.log(`[Data Loader] Resolved IDs:`);\nconsole.log(`  master_doc_id: ${master_doc_id}`);\nconsole.log(`  database_id: ${database_id}`);\n\nreturn [{ json: { master_doc_id, database_id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        48
+      ],
+      "id": "65483c2a-327e-4a0b-b177-8614c861627c",
+      "name": "Resolve File IDs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mode-aware output shape. master_doc + database_id are loaded in all modes.\n// application:  { run_id, mode, ready_jobs, config, master_doc, database_id, root_folder_id, pricing }\n// discovery:    { run_id, mode, config, master_doc, database_id, root_folder_id, existing_job_urls, existing_job_roles, watchlist, pricing }\n// refinement:   { run_id, mode, config, master_doc, database_id, root_folder_id, pricing }  â€” single known job; no job scan/watchlist\n// cover_letter: { run_id, mode, config, master_doc, database_id, root_folder_id, pricing }  â€” single known job; no job scan/watchlist\n// run_id is derived from parent workflow's $execution.id (passed via Trigger input)\n// and mode-based prefix. Used as cross-sheet join key.\n// root_folder_id is echoed from the Trigger input so downstream consumers (recorders)\n// source it here instead of from config.drive_root_folder_id.\n\nconst mode = String($('Trigger').first().json.mode || 'application').toLowerCase().trim();\n\nconst parentExecutionId = String($('Trigger').first().json.parent_execution_id || '').trim();\nif (!parentExecutionId) {\n  throw new Error('[Bundle Output] parent_execution_id missing from Trigger â€” caller must pass {{ $execution.id }}');\n}\nconst prefix = mode === 'discovery' ? 'disc_' :\n                  mode === 'refinement' ? 'refine_' :\n                  mode === 'cover_letter' ? 'cl_' : 'app_';\nconst runId = prefix + parentExecutionId;\n\nconst config = $('Parse Config').first()?.json?.config;\nif (!config || Object.keys(config).length === 0) {\n  throw new Error('[Bundle Output] config missing or empty from Parse Config');\n}\nconst databaseId = $('Resolve File IDs').first()?.json?.database_id;\nif (!databaseId) {\n  throw new Error('[Bundle Output] database_id missing from Resolve File IDs');\n}\nconst rootFolderId = String($('Trigger').first().json.root_folder_id || '').trim();\nif (!rootFolderId) {\n  throw new Error('[Bundle Output] root_folder_id missing from Trigger â€” caller must pass it');\n}\nlet masterDoc = '';\ntry {\n  masterDoc = $('Verify Master Doc').first()?.json?.master_doc || '';\n} catch (e) {\n  throw new Error(`[Bundle Output] Verify Master Doc did not execute: ${e.message}`);\n}\nif (!masterDoc) {\n  throw new Error('[Bundle Output] master_doc missing or empty from Verify Master Doc');\n}\n\nconsole.log(`[Bundle Output] DEBUG: run_id=${runId}, mode=${mode}`);\n\n// Refinement: one known job, supplied by the webhook. No job scan, no watchlist.\nif (mode === 'refinement') {\n  console.log(`[Bundle Output] mode=refinement, run_id=${runId}, master_doc: ${masterDoc.length} chars, config: ${Object.keys(config).length} keys, database_id: ${databaseId}`);\n  return [{\n    json: {\n      run_id: runId,\n      mode: 'refinement',\n      config,\n      master_doc: masterDoc,\n      database_id: databaseId,\n      root_folder_id: rootFolderId,\n      pricing: $('Transform Pricing').first().json.pricing || {}\n    }\n  }];\n}\n\n// Cover letter generate/refine: one known job from the webhook. No job scan, no watchlist.\nif (mode === 'cover_letter') {\n  console.log(`[Bundle Output] mode=cover_letter, run_id=${runId}, master_doc: ${masterDoc.length} chars, config: ${Object.keys(config).length} keys, database_id: ${databaseId}`);\n  return [{\n    json: {\n      run_id: runId,\n      mode: 'cover_letter',\n      config,\n      master_doc: masterDoc,\n      database_id: databaseId,\n      root_folder_id: rootFolderId,\n      pricing: $('Transform Pricing').first().json.pricing || {}\n    }\n  }];\n}\n\nif (mode === 'discovery') {\n  const existingJobUrls = $('Filter Jobs').first()?.json?.existing_job_urls || [];\n  const existingJobRoles = $('Filter Jobs').first()?.json?.existing_job_roles || [];\n  const watchlistRows = $('Load Watchlist').all().map(i => i.json);\n  const watchlist = watchlistRows\n    .filter(row => row && row.company_name)\n    .map(row => ({\n      company_name: String(row.company_name || '').trim(),\n      domain: String(row.domain || '').trim(),\n      category: String(row.category || '').trim(),\n      priority: Number(row.priority) || null,\n      greenhouse_slug: String(row.greenhouse_slug || '').trim(),\n      lever_slug: String(row.lever_slug || '').trim(),\n      ashby_slug: String(row.ashby_slug || '').trim(),\n      workday_url: String(row.workday_url || '').trim(),\n      careers_url: String(row.careers_url || '').trim()\n    }));\n  console.log(`[Bundle Output] mode=discovery, run_id=${runId}, master_doc: ${masterDoc.length} chars, config: ${Object.keys(config).length} keys, existing URLs: ${existingJobUrls.length}, existing roles: ${existingJobRoles.length}, watchlist: ${watchlist.length} companies, database_id: ${databaseId}`);\n  return [{\n    json: {\n      run_id: runId,\n      mode: 'discovery',\n      config,\n      master_doc: masterDoc,\n      database_id: databaseId,\n      root_folder_id: rootFolderId,\n      existing_job_urls: existingJobUrls,\n      existing_job_roles: existingJobRoles,\n      watchlist,\n      pricing: $('Transform Pricing').first().json.pricing || {}\n    }\n  }];\n}\n\nconst jobs = $('Filter Jobs').all().map(i => i.json);\nconsole.log(`[Bundle Output] mode=application, run_id=${runId}, master_doc: ${masterDoc.length} chars, config: ${Object.keys(config).length} keys, ready_jobs: ${jobs.length}, database_id: ${databaseId}`);\nreturn [{\n  json: {\n    run_id: runId,\n    mode: 'application',\n    ready_jobs: jobs,\n    config,\n    master_doc: masterDoc,\n    database_id: databaseId,\n    root_folder_id: rootFolderId,\n    pricing: $('Transform Pricing').first().json.pricing || {}\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        -80
+      ],
+      "id": "c378b72a-64a0-4bc6-a261-b070308cdd5c",
+      "name": "Bundle Output"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "={{ \"'\" + $json.root_folder_id + \"' in parents and trashed = false\" }}",
+        "returnAll": true,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -672,
+        48
+      ],
+      "id": "b73277b0-f4ba-4a78-b314-0d7f9262e9b2",
+      "name": "List Root Folder",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve File IDs').first().json.database_id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "watchlist_companies",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -64,
+        -304
+      ],
+      "id": "d3a420a3-70cf-4906-9e51-85141fb210a5",
+      "name": "Load Watchlist",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve File IDs').first().json.database_id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "jobs",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -64,
+        -144
+      ],
+      "id": "ae9c7588-60cc-491b-b2af-c8b5167043e3",
+      "name": "Load Jobs",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        528,
+        -128
+      ],
+      "id": "ccc0ede1-294b-4867-b4a4-0d7f5c040051",
+      "name": "Merge Sync"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve File IDs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "pricing",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -64,
+        176
+      ],
+      "id": "eb1dfc1f-bc0b-4f0e-8d99-7851023b0f0b",
+      "name": "Read Pricing",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst pricing = {};\n\nrows.forEach(row => {\n  if (!row.model) return;\n  pricing[row.model] = {\n    provider: row.provider || '',\n    input_per_million: Number(row.input_per_million) || 0,\n    output_per_million: Number(row.output_per_million) || 0,\n    cached_input_per_million: Number(row.cached_input_per_million) || 0,\n    cache_write_per_million: Number(row.cache_write_per_million) || 0\n  };\n});\n\nconsole.log(`[Data Loader] Loaded pricing for ${Object.keys(pricing).length} models`);\nreturn [{ json: { pricing } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        176
+      ],
+      "id": "14bcb919-aa56-40c8-abd3-d563210dd37d",
+      "name": "Transform Pricing"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "root_folder_id"
+            },
+            {
+              "name": "mode"
+            },
+            {
+              "name": "parent_execution_id"
+            },
+            {
+              "name": "job_ids"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        48
+      ],
+      "id": "e97f0f3f-25a1-43a7-a4e2-e78d195563bb",
+      "name": "Trigger"
+    }
+  ],
+  "connections": {
+    "Filter Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Read Master Doc": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Verify Master Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Master Doc": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Read Config": {
+      "main": [
+        [
+          {
+            "node": "Parse Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Resolve File IDs": {
+      "main": [
+        [
+          {
+            "node": "Load Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Config",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Master Doc",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Watchlist",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Root Folder": {
+      "main": [
+        [
+          {
+            "node": "Resolve File IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Jobs": {
+      "main": [
+        [
+          {
+            "node": "Filter Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Sync": {
+      "main": [
+        [
+          {
+            "node": "Bundle Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Watchlist": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Pricing": {
+      "main": [
+        [
+          {
+            "node": "Transform Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Pricing": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "List Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "d8d19bd9-0e01-430b-b5a5-55382231c838",
+  "activeVersionId": "d8d19bd9-0e01-430b-b5a5-55382231c838",
+  "versionCounter": 346,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-13T23:38:39.692Z",
+      "createdAt": "2026-05-13T23:38:39.692Z",
+      "role": "workflow:owner",
+      "workflowId": "cpkOoZXkF0E55IYP",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version d8d19bd9",
+    "description": ""
+  }
+}

@@ -1,0 +1,32 @@
+<svg viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg" role="img" style="font-family:Calibri, 'Segoe UI', sans-serif;background:#FFFFFF;max-width:100%;height:auto">
+<title>Sameness</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5B6472" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text x="40" y="40" font-size="12" fill="#1A1A2E" font-weight="600" text-anchor="start" dominant-baseline="central">General tools — one model, locked prompt</text>
+<rect x="40" y="58" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="99" y="87" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Same resume</text>
+<rect x="172" y="58" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="231" y="87" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Same resume</text>
+<rect x="304" y="58" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="363" y="87" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Same resume</text>
+<rect x="436" y="58" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="495" y="87" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Same resume</text>
+<rect x="568" y="58" width="72" height="58" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.8"/>
+<text x="604" y="80" font-size="12" fill="#A32D2D" font-weight="400" text-anchor="middle" dominant-baseline="central">Recruiter:</text>
+<text x="604" y="96" font-size="12" fill="#A32D2D" font-weight="600" text-anchor="middle" dominant-baseline="central">skip</text>
+<text x="40" y="150" font-size="12" fill="#5B6472" font-weight="400" text-anchor="start" dominant-baseline="central">62% of AI-flagged resumes are now rejected for lacking authentic detail</text>
+<line x1="340" y1="172" x2="340" y2="200" stroke="#5B6472" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="40" y="232" font-size="12" fill="#1A1A2E" font-weight="600" text-anchor="start" dominant-baseline="central">Maestro — your models, your prompts</text>
+<rect x="40" y="250" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="99" y="279" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Generic draft</text>
+<rect x="172" y="250" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="231" y="279" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Generic draft</text>
+<rect x="304" y="250" width="118" height="58" rx="8" fill="#FAEEDA" stroke="#A16207" stroke-width="1.5"/>
+<text x="363" y="272" font-size="12" fill="#A16207" font-weight="400" text-anchor="middle" dominant-baseline="central">Tuned to you</text>
+<text x="363" y="290" font-size="12" fill="#A16207" font-weight="600" text-anchor="middle" dominant-baseline="central">your voice</text>
+<rect x="436" y="250" width="118" height="58" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="495" y="279" font-size="12" fill="#5F5E5A" font-weight="400" text-anchor="middle" dominant-baseline="central">Generic draft</text>
+<rect x="568" y="250" width="72" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="604" y="272" font-size="12" fill="#0F6E56" font-weight="400" text-anchor="middle" dominant-baseline="central">Recruiter:</text>
+<text x="604" y="288" font-size="12" fill="#0F6E56" font-weight="600" text-anchor="middle" dominant-baseline="central">read</text>
+<text x="40" y="342" font-size="12" fill="#5B6472" font-weight="400" text-anchor="start" dominant-baseline="central">Editable prompts + per-agent model choice break the convergence</text>
+</svg>

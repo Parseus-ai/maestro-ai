@@ -1,0 +1,234 @@
+{
+  "updatedAt": "2026-06-03T21:59:23.682Z",
+  "createdAt": "2026-05-18T20:04:24.121Z",
+  "id": "ZnsIenRL8dIeVsuP",
+  "name": "Ashby Source",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -368,
+        -48
+      ],
+      "id": "c355aa78-e477-4cbb-93db-13989800b99a",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "watchlist",
+              "type": "array"
+            },
+            {
+              "name": "run_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -368,
+        -240
+      ],
+      "id": "1377d1b6-bba9-480c-9aad-7ac2cd186c34",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run Once for All Item\nconst item = $input.item;\nif (!item || !item.json || typeof item.json !== 'object') {\n  console.log('[Ashby Parse] empty/invalid input â€” likely fetch error');\n  return { json: { jobs: [], company: $('Set Inputs').item.json.company_name || '', error: 'no_response' } };\n}\nconst response = item.json;\nconst company = $('Set Inputs').item.json;\n\nconst jobs = Array.isArray(response.jobs) ? response.jobs : [];\n\nconst decodeEntities = (s) => String(s || '')\n  .replace(/&amp;/g, '&')\n  .replace(/&nbsp;/g, ' ')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#39;/g, \"'\")\n  .replace(/&#x27;/g, \"'\");\n\nconst stripHtml = (html) => decodeEntities(html)\n  .replace(/<[^>]*>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst isRemote = (j) => {\n  if (j.isRemote === true) return true;\n  const wp = String(j.workplaceType || '').toLowerCase();\n  if (wp === 'remote') return true;\n  const loc = String(j.location || '').toLowerCase();\n  if (loc.includes('remote')) return true;\n  const secondary = Array.isArray(j.secondaryLocations) ? j.secondaryLocations : [];\n  return secondary.some(s => String(s?.location || '').toLowerCase().includes('remote'));\n};\n\nconst normalizeEmploymentType = (t) =>\n  String(t || '').toUpperCase().replace(/[-\\s]/g, '');\n\nconst salaryText = (j) => {\n  const comp = j.compensation || {};\n  return String(comp.scrapeableCompensationSalarySummary || comp.compensationTierSummary || '').trim();\n};\n\n// Exclude unlisted/draft postings (isListed=false). Defaults to including\n// when isListed is missing (some payloads omit the field for active jobs).\nconst listed = jobs.filter(j => j?.isListed !== false);\n\nconst normalized = listed.map(job => ({\n  company: company.company_name,\n  title: String(job.title || '').trim(),\n  url: String(job.jobUrl || job.applyUrl || '').trim(),\n  description_html: decodeEntities(job.descriptionHtml),\n  description: job.descriptionPlain\n    ? String(job.descriptionPlain).replace(/\\s+/g, ' ').trim()\n    : stripHtml(job.descriptionHtml),\n  location: String(job.location || '').trim(),\n  remote: isRemote(job),\n  salary_text: salaryText(job),\n  employment_type: normalizeEmploymentType(job.employmentType),\n  source: 'ashby',\n  posted_at: String(job.publishedAt || '').trim()\n}));\n\nconsole.log(`[Ashby Parse] ${company.company_name} (${company.slug}): ${jobs.length} raw, ${listed.length} listed, ${normalized.length} normalized`);\n\nreturn normalized.map(j => ({ json: { ...j, _type: 'job' } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -176
+      ],
+      "id": "7c68c1cf-15ac-4212-abc7-1a508683dd98",
+      "name": "Parse and Normalize"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Trigger').first().json.config || {};\nconst watchlist = $('Trigger').first().json.watchlist || [];\n\nconst orderRaw = config.discovery_fetcher_order || '';\nconst enabledSources = String(orderRaw)\n  .split(/[;,]/)\n  .map(s => s.trim().toLowerCase())\n  .filter(s => s.length > 0);\n\nif (!enabledSources.includes('ashby')) {\n  console.log('[Ashby] Disabled via discovery_fetcher_order â€” skipping');\n  return [];\n}\n\nconst thresholdRaw = Number(config.discovery_priority_threshold);\nconst priorityThreshold = isNaN(thresholdRaw) ? 999 : thresholdRaw;\n\nconst companies = watchlist\n  .filter(c => {\n    if (!c) return false;\n    if (String(c.ashby_slug || '').trim().length === 0) return false;\n    const p = Number(c.priority);\n    const priority = isNaN(p) ? 999 : p;\n    return priority <= priorityThreshold;\n  })\n  .map(c => ({\n    company_name: String(c.company_name || '').trim(),\n    slug: String(c.ashby_slug || '').trim()\n  }));\n\nif (companies.length === 0) {\n  console.log(`[Ashby] No companies match priority <= ${priorityThreshold} with ashby_slug â€” skipping`);\n  return [];\n}\n\nconsole.log(`[Ashby] Fetching ${companies.length} boards (priority <= ${priorityThreshold})`);\nreturn companies.map(c => ({ json: c }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -112
+      ],
+      "id": "160e39ad-b025-4fc0-9fb6-3503f4665c9a",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const company = $('Set Inputs').item.json;\nconst runId = $('Trigger').first().json.run_id || '';\nconst errPayload = $input.first().json || {};\nconst errObj = errPayload.error || {};\n\nconst statusCode = String(\n  errObj.httpCode ||\n  errObj.status ||\n  errObj.cause?.response?.status ||\n  ''\n);\nconst message = String(errObj.message || 'Unknown error').substring(0, 500);\n\nconsole.log(`[Ashby] Fetch failed for ${company.company_name} (${company.slug}): ${statusCode} ${message}`);\n\nreturn [{\n  json: {\n    _type: 'failure',\n    run_id: runId,\n    discovered_at: new Date().toISOString(),\n    source: 'ashby',\n    company: company.company_name || '',\n    slug: company.slug || '',\n    status_code: statusCode,\n    error_message: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        0
+      ],
+      "id": "8a9bfd49-1828-4ca8-bbc5-4b88ca1a83c4",
+      "name": "Build Error Response"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        592,
+        -96
+      ],
+      "id": "1a926b29-a575-4500-9990-ebab1e535ed0",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.ashbyhq.com/posting-api/job-board/{{ $json.slug }}?includeCompensation=true",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        -112
+      ],
+      "id": "04bc9f13-101a-4772-b56a-39ec993570b8",
+      "name": "Ashby Fetcher",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Ashby Fetcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse and Normalize": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ashby Fetcher": {
+      "main": [
+        [
+          {
+            "node": "Parse and Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "7ac0b6a8-c153-47ea-b3b9-6bf8b541468f",
+  "activeVersionId": "7ac0b6a8-c153-47ea-b3b9-6bf8b541468f",
+  "versionCounter": 35,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-18T20:04:24.124Z",
+      "createdAt": "2026-05-18T20:04:24.124Z",
+      "role": "workflow:owner",
+      "workflowId": "ZnsIenRL8dIeVsuP",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 7ac0b6a8",
+    "description": ""
+  }
+}

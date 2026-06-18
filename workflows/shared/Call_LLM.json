@@ -1,0 +1,616 @@
+{
+  "updatedAt": "2026-06-11T21:11:59.263Z",
+  "createdAt": "2026-05-09T05:06:28.059Z",
+  "id": "mxnzrmY5JgwI2DNY",
+  "name": "Call LLM",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "provider"
+            },
+            {
+              "name": "model"
+            },
+            {
+              "name": "system"
+            },
+            {
+              "name": "user_message"
+            },
+            {
+              "name": "max_tokens"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1200,
+        -160
+      ],
+      "id": "e53447d8-0478-4cbc-9b1d-e9a7691f1f5b",
+      "name": "Execute Workflow Trigger"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "=={{ $json.provider }}",
+                    "rightValue": "anthropic",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "fd3a7e4e-5da8-4576-a1c8-9ce68dfb7743"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "anthropic"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a9ae7ead-b35e-4670-9176-3cc30dd5e915",
+                    "leftValue": "=={{ $json.provider }}",
+                    "rightValue": "openai",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "openai"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "3ce38a5f-afd2-48f0-a414-b925e583c171",
+                    "leftValue": "=={{ $json.provider }}",
+                    "rightValue": "gimini",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "gemini"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -800,
+        -192
+      ],
+      "id": "a1e7a0c4-9c62-41bd-80e6-8555ab5596b4",
+      "name": "Switch on Provider"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst body = {\n  model: input.model,\n  max_tokens: input.max_tokens,\n  system: [\n    {\n      type: 'text',\n      text: input.system,\n      cache_control: { type: 'ephemeral' }\n    }\n  ],\n  messages: [\n    { role: 'user', content: input.user_message }\n  ]\n};\n\nconsole.log(`[Call LLM/Anthropic] Building request for model: ${input.model}, system: ${(input.system || '').length} chars (cache-marked)`);\n\nreturn [{\n  json: {\n    request_body: body,\n    provider: 'anthropic',\n    model: input.model\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -640
+      ],
+      "id": "8dd4a522-26db-48a9-bb45-36d1b0616ffc",
+      "name": "Build Anthropic Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Anthropic response into provider-agnostic shape\n// Mode: Run Once for All Items\n// Cost is NOT computed here â€” pricing lives in the pricing sheet and is applied by Log Job Result\n\nconst claudeResponse = $input.first().json;\nconst buildRequest = $('Build Anthropic Request').first().json;\n\nconst content = claudeResponse.content?.[0]?.text || '';\nconst usage = claudeResponse.usage || {};\n\nconst inputTokens = usage.input_tokens || 0;\nconst outputTokens = usage.output_tokens || 0;\nconst cachedInputTokens = usage.cache_read_input_tokens || 0;\nconst cacheWriteTokens = usage.cache_creation_input_tokens || 0;\n\nconst modelUsed = claudeResponse.model || buildRequest.model;\n\nconst success = content.length > 0;\nconst errors = success ? [] : ['Empty response from Anthropic'];\n\nconsole.log(`[Call LLM/Anthropic] Response: ${content.length} chars | tokens: ${inputTokens}in + ${outputTokens}out + ${cachedInputTokens}cached + ${cacheWriteTokens}cache_write | model: ${modelUsed}`);\n\nreturn [{\n  json: {\n    success,\n    content,\n    input_tokens: inputTokens,\n    output_tokens: outputTokens,\n    cached_input_tokens: cachedInputTokens,\n    cache_write_tokens: cacheWriteTokens,\n    model_used: modelUsed,\n    provider_used: 'anthropic',\n    errors\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -816
+      ],
+      "id": "84853602-5dc3-47dc-9d1b-8b9edd0b3396",
+      "name": "Normalize Anthropic Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fallback for providers we haven't implemented yet\n// Mode: Run Once for All Items\n\nconst input = $input.first().json;\nconst provider = input.provider || 'unknown';\n\nconst errorMsg = `Provider \"${provider}\" is not yet implemented in Call LLM. Currently supported: anthropic. Add a new branch in Call LLM to support this provider.`;\n\nconsole.error(`[Call LLM] ${errorMsg}`);\n\nreturn [{\n  json: {\n    success: false,\n    content: '',\n    input_tokens: 0,\n    output_tokens: 0,\n    cost_estimate: 0,\n    model_used: input.model || 'unknown',\n    provider_used: provider,\n    errors: [errorMsg]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        304
+      ],
+      "id": "0a9841d5-aeb8-493b-86cf-fb80c8688f77",
+      "name": "Unsupported Provider Error"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Call LLM Set Inputs â€” CANONICAL VERSION\n// Mode: Run Once for All Items\n// Handles both Manual Trigger and Execute Workflow Trigger\n// Defensively strips '=' prefix that n8n adds when crossing Execute Workflow boundaries\n// Normalizes provider (trim + lowercase) and model (trim) so downstream nodes\n// see clean values regardless of config whitespace/case.\n\nconst trigger = $input.first()?.json || {};\n\n// DEBUG: log raw trigger\nconsole.log(`[Call LLM Set Inputs] Raw trigger keys: ${Object.keys(trigger).join(', ')}`);\nconsole.log(`[Call LLM Set Inputs] Raw max_tokens: ${JSON.stringify(trigger.max_tokens)} (type: ${typeof trigger.max_tokens})`);\n\n// Strip leading '=' that n8n sometimes adds to expression-resolved values\nconst stripEquals = (val) => {\n  if (typeof val === 'string' && val.startsWith('=')) {\n    return val.substring(1);\n  }\n  return val;\n};\n\nconst TEST_DEFAULTS = {\n  provider: 'anthropic',\n  model: 'claude-haiku-4-5-20251001',\n  system: 'You are a helpful assistant.',\n  user_message: 'Say hello in 5 words.',\n  max_tokens: 50\n};\n\nconst usingDefaults = !trigger.provider;\n\nconst provider = String(stripEquals(trigger.provider) || TEST_DEFAULTS.provider).trim().toLowerCase();\nconst model = String(stripEquals(trigger.model) || TEST_DEFAULTS.model).trim();\nconst system = stripEquals(trigger.system) || TEST_DEFAULTS.system;\nconst userMessage = stripEquals(trigger.user_message) || TEST_DEFAULTS.user_message;\nconst maxTokensStripped = stripEquals(trigger.max_tokens);\nconst maxTokens = Number(maxTokensStripped) || TEST_DEFAULTS.max_tokens;\n\nconsole.log(`[Call LLM Set Inputs] After Number() â€” max_tokens: ${maxTokens} (type: ${typeof maxTokens})`);\n\nif (usingDefaults) {\n  console.log('[Call LLM] No trigger payload â€” using test defaults');\n}\n\nconsole.log(`[Call LLM] Provider: ${provider}, Model: ${model}, max_tokens: ${maxTokens}`);\n\nreturn [{\n  json: {\n    provider,\n    model,\n    system,\n    user_message: userMessage,\n    max_tokens: maxTokens\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        -160
+      ],
+      "id": "dcf72761-a5e3-4c87-8d55-a98b87764844",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -368
+      ],
+      "id": "8d4d1873-6e46-4086-9c12-ef1d3d10d18d",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build OpenAI Request\n// Mode: Run Once for All Items\n// Canonical inputs â†’ OpenAI Chat Completions request body.\n// OpenAI caching is automatic for prompts â‰¥1024 tokens; no cache_control needed.\n\nconst input = $input.first().json;\n\nconst body = {\n  model: input.model,\n  messages: [\n    { role: 'system', content: input.system },\n    { role: 'user', content: input.user_message }\n  ],\n  max_completion_tokens: input.max_tokens\n};\n\nconsole.log(`[Call LLM/OpenAI] Building request for model: ${input.model}, system: ${(input.system || '').length} chars, max_completion_tokens: ${input.max_tokens}`);\n\nreturn [{\n  json: {\n    request_body: body,\n    provider: 'openai',\n    model: input.model\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        -288
+      ],
+      "id": "71ae97d8-b087-4cba-8ce5-f4163156b92c",
+      "name": "Build OpenAI Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -112,
+        -640
+      ],
+      "id": "c8ad8ce8-6eb9-4a94-a4e5-61fd43ba7b14",
+      "name": "Anthropic HTTP Request",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "jbu0Y5VPQBpvuW8w",
+          "name": "Anthropic- agentic recruiter"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -144,
+        -288
+      ],
+      "id": "fc41b009-fbeb-4771-98ec-7bae877672e3",
+      "name": "OpenAI HTTP Request",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "jbu0Y5VPQBpvuW8w",
+          "name": "Anthropic- agentic recruiter"
+        }
+      },
+      "disabled": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Error Response (Anthropic)\n// Mode: Run Once for All Items\n// Fires when HTTP Request to Anthropic fails after all retries are exhausted.\n// Emits the same shape as Normalize Anthropic Response so downstream agents see uniform output.\nconst errItem = $input.first()?.json || {};\nconst setInputs = $('Set Inputs').first().json;\n// Anthropic API errors come back as: { type: 'error', error: { type: '...', message: '...' } }\n// n8n network/timeout errors flatten differently â€” defensive reads handle both.\nconst errorType =\n  errItem?.error?.type ||\n  errItem?.type ||\n  errItem?.code ||\n  'unknown_error';\nconst errorMessage =\n  errItem?.error?.message ||\n  errItem?.message ||\n  'Unknown LLM API error';\n// n8n wraps provider errors as NodeApiError: the real provider text (e.g. the\n// credit-balance message) lands in error.description, not error.message.\nconst errorDescription =\n  errItem?.error?.description ||\n  errItem?.description ||\n  '';\nconst httpCode =\n  errItem?.error?.httpCode ||\n  errItem?.statusCode ||\n  errItem?.httpCode ||\n  null;\n// Categorize for downstream handling and logging.\n// Match against BOTH message and description â€” the credit-balance text lives in\n// description when n8n wraps the provider error as NodeApiError.\nlet category = 'unknown';\nconst msgLower = `${String(errorMessage)} ${String(errorDescription)}`.toLowerCase();\nif (\n  msgLower.includes('credit balance') ||\n  msgLower.includes('insufficient') ||\n  msgLower.includes('billing') ||\n  msgLower.includes('quota')\n) {\n  category = 'insufficient_credit';\n} else if (\n  errorType === 'authentication_error' ||\n  errorType === 'permission_error' ||\n  httpCode === 401 ||\n  httpCode === 403\n) {\n  category = 'invalid_api_key';\n} else if (errorType === 'rate_limit_error' || httpCode === 429) {\n  category = 'rate_limit';\n} else if (errorType === 'overloaded_error' || httpCode === 529) {\n  category = 'provider_overloaded';\n} else if (\n  errorType === 'ETIMEDOUT' ||\n  errorType === 'ESOCKETTIMEDOUT' ||\n  errorType === 'ECONNRESET' ||\n  msgLower.includes('timeout') ||\n  msgLower.includes('timed out')\n) {\n  category = 'timeout';\n} else if (errorType === 'invalid_request_error' || (httpCode >= 400 && httpCode < 500)) {\n  category = 'invalid_request';\n} else if (errorType === 'api_error' || (httpCode >= 500 && httpCode < 600)) {\n  category = 'provider_error';\n}\nconsole.log(\n  `[Call LLM/Anthropic] ERROR after retries â€” category: ${category}, type: ${errorType}, httpCode: ${httpCode}, msg: ${String(errorMessage).substring(0, 200)}`\n);\nreturn [{\n  json: {\n    success: false,\n    content: '',\n    input_tokens: 0,\n    output_tokens: 0,\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: setInputs.model,\n    provider_used: setInputs.provider,\n    errors: [`${category}: ${errorMessage}`],\n    error: {\n      category,\n      type: errorType,\n      http_code: httpCode,\n      message: errorMessage,\n      description: errorDescription,\n      provider: setInputs.provider,\n      model: setInputs.model\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -624
+      ],
+      "id": "fd94c697-7d3c-40da-9d26-97fea171b3d2",
+      "name": "Build Anthropic Error Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize OpenAI response into provider-agnostic shape\n// Mode: Run Once for All Items\n// OpenAI's usage.prompt_tokens INCLUDES cached tokens â€” we subtract so\n// input_tokens means non-cached only, matching the Anthropic convention.\n\nconst openaiResponse = $input.first().json;\nconst buildRequest = $('Build OpenAI Request').first().json;\n\nconst content = openaiResponse.choices?.[0]?.message?.content || '';\nconst usage = openaiResponse.usage || {};\n\nconst promptTokens = usage.prompt_tokens || 0;\nconst completionTokens = usage.completion_tokens || 0;\nconst cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;\nconst nonCachedInputTokens = Math.max(0, promptTokens - cachedTokens);\n\nconst modelUsed = buildRequest.model || openaiResponse.model;\n\nconst success = content.length > 0;\nconst errors = success ? [] : ['Empty response from OpenAI'];\n\nconsole.log(`[Call LLM/OpenAI] Response: ${content.length} chars | tokens: ${nonCachedInputTokens}in + ${completionTokens}out + ${cachedTokens}cached | model: ${modelUsed}`);\n\nreturn [{\n  json: {\n    success,\n    content,\n    input_tokens: nonCachedInputTokens,\n    output_tokens: completionTokens,\n    cached_input_tokens: cachedTokens,\n    cache_write_tokens: 0,\n    model_used: modelUsed,\n    provider_used: 'openai',\n    errors\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -416
+      ],
+      "id": "8f36dbe4-ccfe-4874-825e-d2d909ba217a",
+      "name": "Normalize OpenAI Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Error Response (OpenAI)\n// Mode: Run Once for All Items\n// Fires when HTTP Request to OpenAI fails after all retries are exhausted.\n// Emits the same shape as Normalize OpenAI Response so downstream agents see uniform output.\nconst errItem = $input.first()?.json || {};\nconst setInputs = $('Set Inputs').first().json;\n\nconst errorType =\n  errItem?.error?.type ||\n  errItem?.type ||\n  'unknown_error';\nconst errorCode =\n  errItem?.error?.code ||\n  errItem?.code ||\n  '';\nconst errorMessage =\n  errItem?.error?.message ||\n  errItem?.message ||\n  'Unknown LLM API error';\n// n8n wraps provider errors as NodeApiError: the real provider text (e.g. the\n// credit/quota message) lands in error.description, not error.message.\nconst errorDescription =\n  errItem?.error?.description ||\n  errItem?.description ||\n  '';\nconst httpCode =\n  errItem?.error?.httpCode ||\n  errItem?.httpCode ||\n  errItem?.statusCode ||\n  null;\n\n// Match against BOTH message and description.\nlet category = 'unknown';\nconst msgLower = `${String(errorMessage)} ${String(errorDescription)}`.toLowerCase();\nconst codeLower = String(errorCode).toLowerCase();\nif (\n  codeLower === 'insufficient_quota' ||\n  msgLower.includes('insufficient_quota') ||\n  msgLower.includes('credit balance') ||\n  msgLower.includes('insufficient') ||\n  msgLower.includes('billing') ||\n  msgLower.includes('quota')\n) {\n  category = 'insufficient_credit';\n} else if (\n  errorType === 'invalid_api_key' ||\n  codeLower === 'invalid_api_key' ||\n  httpCode === 401 ||\n  httpCode === 403\n) {\n  category = 'invalid_api_key';\n} else if (\n  errorType === 'rate_limit_error' ||\n  codeLower === 'rate_limit_exceeded' ||\n  httpCode === 429\n) {\n  category = 'rate_limit';\n} else if (\n  httpCode === 503 ||\n  msgLower.includes('overloaded') ||\n  msgLower.includes('engine is currently overloaded')\n) {\n  category = 'provider_overloaded';\n} else if (\n  msgLower.includes('timeout') ||\n  msgLower.includes('timed out')\n) {\n  category = 'timeout';\n} else if (errorType === 'invalid_request_error' || (httpCode >= 400 && httpCode < 500)) {\n  category = 'invalid_request';\n} else if (errorType === 'server_error' || errorType === 'api_error' || (httpCode >= 500 && httpCode < 600)) {\n  category = 'provider_error';\n}\n\nconsole.log(\n  `[Call LLM/OpenAI] ERROR after retries â€” category: ${category}, type: ${errorType}, code: ${errorCode}, httpCode: ${httpCode}, msg: ${String(errorMessage).substring(0, 200)}`\n);\n\nreturn [{\n  json: {\n    success: false,\n    content: '',\n    input_tokens: 0,\n    output_tokens: 0,\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: setInputs.model,\n    provider_used: setInputs.provider,\n    errors: [`${category}: ${errorMessage}`],\n    error: {\n      category,\n      type: errorType,\n      http_code: httpCode,\n      message: errorMessage,\n      description: errorDescription,\n      provider: setInputs.provider,\n      model: setInputs.model\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        -224
+      ],
+      "id": "302c7797-82b8-4b22-8517-f7344e3dc0b2",
+      "name": "Build OpenAI Error Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Gemini Request\n// Mode: Run Once for All Items\n// Canonical inputs â†’ Google Generative AI generateContent request body.\n// Gemini's systemInstruction is separate from contents (unlike OpenAI/Anthropic).\n// Implicit caching is automatic for prompts â‰¥1024 tokens (Flash) / â‰¥4096 (Pro).\n\nconst input = $input.first().json;\n\n// Defensive: strip 'models/' prefix if user put one in config\nconst modelClean = String(input.model || '').replace(/^models\\//i, '');\n\nconst body = {\n  contents: [\n    {\n      role: 'user',\n      parts: [{ text: input.user_message }]\n    }\n  ],\n  systemInstruction: {\n    parts: [{ text: input.system }]\n  },\n  generationConfig: {\n    maxOutputTokens: input.max_tokens\n  }\n};\n\nconsole.log(`[Call LLM/Gemini] Building request for model: ${modelClean}, system: ${(input.system || '').length} chars, maxOutputTokens: ${input.max_tokens}`);\n\nreturn [{\n  json: {\n    request_body: body,\n    provider: 'gemini',\n    model: modelClean\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        48
+      ],
+      "id": "59dbf18a-c642-404b-8bac-5f745ee53f4e",
+      "name": "Build Gemini Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -112,
+        48
+      ],
+      "id": "d3a60e48-bde8-4474-b7b5-c0a1aef22ab1",
+      "name": "Gemini HTTP Request",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "jbu0Y5VPQBpvuW8w",
+          "name": "Anthropic- agentic recruiter"
+        }
+      },
+      "disabled": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize Gemini response into provider-agnostic shape\n// Mode: Run Once for All Items\n// Gemini's usageMetadata.promptTokenCount INCLUDES cached tokens â€” we subtract\n// so input_tokens means non-cached only, matching the convention.\n// Prefers buildRequest.model so pricing lookups match config keys\n// (Gemini API's modelVersion may include suffixes config doesn't have).\n\nconst geminiResponse = $input.first().json;\nconst buildRequest = $('Build Gemini Request').first().json;\n\n// Gemini returns content as candidates[0].content.parts[*].text\nconst parts = geminiResponse.candidates?.[0]?.content?.parts || [];\nconst content = parts.map(p => p?.text || '').join('').trim();\n\nconst usage = geminiResponse.usageMetadata || {};\nconst promptTokens = usage.promptTokenCount || 0;\nconst completionTokens = usage.candidatesTokenCount || 0;\nconst cachedTokens = usage.cachedContentTokenCount || 0;\nconst nonCachedInputTokens = Math.max(0, promptTokens - cachedTokens);\n\nconst modelUsed = buildRequest.model || geminiResponse.modelVersion || 'unknown';\n\nconst success = content.length > 0;\nconst errors = success ? [] : ['Empty response from Gemini'];\n\n// Surface non-STOP finish reasons (SAFETY, MAX_TOKENS, RECITATION, etc.)\nconst finishReason = geminiResponse.candidates?.[0]?.finishReason;\nif (finishReason && finishReason !== 'STOP') {\n  errors.push(`Gemini finishReason: ${finishReason}`);\n}\n\nconsole.log(`[Call LLM/Gemini] Response: ${content.length} chars | tokens: ${nonCachedInputTokens}in + ${completionTokens}out + ${cachedTokens}cached | model: ${modelUsed} | finish: ${finishReason || 'unknown'}`);\n\nreturn [{\n  json: {\n    success,\n    content,\n    input_tokens: nonCachedInputTokens,\n    output_tokens: completionTokens,\n    cached_input_tokens: cachedTokens,\n    cache_write_tokens: 0,\n    model_used: modelUsed,\n    provider_used: 'gemini',\n    errors\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -16
+      ],
+      "id": "deb05d1f-725f-48e5-8985-3ca404591329",
+      "name": "Normalize Gemini Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Error Response (Gemini)\n// Mode: Run Once for All Items\n// Fires when HTTP Request to Gemini fails after all retries are exhausted.\n// Emits the same shape as Normalize Gemini Response so downstream agents see uniform output.\nconst errItem = $input.first()?.json || {};\nconst setInputs = $('Set Inputs').first().json;\n\nconst errorStatus =\n  errItem?.error?.status ||\n  errItem?.status ||\n  '';\nconst errorMessage =\n  errItem?.error?.message ||\n  errItem?.message ||\n  'Unknown LLM API error';\n// n8n wraps provider errors as NodeApiError: the real provider text (e.g. the\n// quota/credit message) lands in error.description, not error.message.\nconst errorDescription =\n  errItem?.error?.description ||\n  errItem?.description ||\n  '';\nconst httpCode =\n  errItem?.error?.httpCode ||\n  errItem?.httpCode ||\n  errItem?.statusCode ||\n  null;\n\n// Match against BOTH message and description.\nlet category = 'unknown';\nconst msgLower = `${String(errorMessage)} ${String(errorDescription)}`.toLowerCase();\nconst statusUpper = String(errorStatus).toUpperCase();\nconst isResourceExhausted = statusUpper === 'RESOURCE_EXHAUSTED' || httpCode === 429;\nif (\n  msgLower.includes('credit balance') ||\n  msgLower.includes('insufficient') ||\n  msgLower.includes('billing') ||\n  msgLower.includes('quota')\n) {\n  category = 'insufficient_credit';\n} else if (\n  statusUpper === 'UNAUTHENTICATED' ||\n  statusUpper === 'PERMISSION_DENIED' ||\n  httpCode === 401 ||\n  httpCode === 403\n) {\n  category = 'invalid_api_key';\n} else if (isResourceExhausted) {\n  category = 'rate_limit';\n} else if (\n  httpCode === 503 ||\n  statusUpper === 'UNAVAILABLE' ||\n  msgLower.includes('overloaded')\n) {\n  category = 'provider_overloaded';\n} else if (\n  httpCode === 504 ||\n  statusUpper === 'DEADLINE_EXCEEDED' ||\n  msgLower.includes('timeout') ||\n  msgLower.includes('timed out')\n) {\n  category = 'timeout';\n} else if (statusUpper === 'INVALID_ARGUMENT' || (httpCode >= 400 && httpCode < 500)) {\n  category = 'invalid_request';\n} else if (httpCode >= 500 && httpCode < 600) {\n  category = 'provider_error';\n}\n\nconsole.log(\n  `[Call LLM/Gemini] ERROR after retries â€” category: ${category}, status: ${errorStatus}, httpCode: ${httpCode}, msg: ${String(errorMessage).substring(0, 200)}`\n);\n\nreturn [{\n  json: {\n    success: false,\n    content: '',\n    input_tokens: 0,\n    output_tokens: 0,\n    cached_input_tokens: 0,\n    cache_write_tokens: 0,\n    model_used: setInputs.model,\n    provider_used: setInputs.provider,\n    errors: [`${category}: ${errorMessage}`],\n    error: {\n      category,\n      type: errorStatus,\n      http_code: httpCode,\n      message: errorMessage,\n      description: errorDescription,\n      provider: setInputs.provider,\n      model: setInputs.model\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        176
+      ],
+      "id": "2aa16893-cce9-464e-b4e0-f01ca0489af8",
+      "name": "Build Gemini Error Response"
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch on Provider": {
+      "main": [
+        [
+          {
+            "node": "Build Anthropic Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build OpenAI Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gemini Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported Provider Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Anthropic Request": {
+      "main": [
+        [
+          {
+            "node": "Anthropic HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsupported Provider Error": {
+      "main": [
+        []
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Switch on Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenAI Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Normalize Anthropic Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Anthropic Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Normalize OpenAI Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build OpenAI Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Anthropic Error Response": {
+      "main": [
+        []
+      ]
+    },
+    "Build Gemini Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Normalize Gemini Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gemini Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "4227fba6-cd60-4f42-9947-ce78a26c512d",
+  "activeVersionId": "4227fba6-cd60-4f42-9947-ce78a26c512d",
+  "versionCounter": 307,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-09T05:06:28.060Z",
+      "createdAt": "2026-05-09T05:06:28.060Z",
+      "role": "workflow:owner",
+      "workflowId": "mxnzrmY5JgwI2DNY",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 4227fba6",
+    "description": ""
+  }
+}

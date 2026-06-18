@@ -1,0 +1,425 @@
+{
+  "updatedAt": "2026-06-09T23:23:47.338Z",
+  "createdAt": "2026-05-18T05:59:05.894Z",
+  "id": "4bjXMpGcylUjxKXK",
+  "name": "Run Error Handler",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Build Error Row â€” Run Error Handler\n// Mode: Run Once for All Items\n// Fires from Error Trigger when a parent workflow fails.\n// Reconstructs the same run_id format Data Loader uses (prefix + execution.id)\n// so this row joins with successful rows in jobs/agent_outputs/model_usage.\n\nconst input = $('Error Trigger').first()?.json || {};\nconst execution = input.execution || {};\nconst workflow = input.workflow || {};\nconst errObj = execution.error || {};\n\n// Prefix mapping matches Data Loader's modeâ†’prefix logic, keyed by orchestrator\n// workflow name (each orchestrator runs exactly one Data Loader mode).\nconst prefixMap = {\n  'Job Discovery': 'disc_',\n  'Application Orchestrator': 'app_',\n  'Application Refinement': 'refine_',\n  'Cover Letter Generation & Refinement': 'cl_'\n};\nconst prefix = prefixMap[workflow.name] || 'unknown_';\nconst executionId = execution.id || '';\nconst runId = prefix + executionId;\n\n// Defensive reads â€” Error Trigger payload shape varies by error type\nconst errorName = errObj.name || errObj.type || '';\nconst errorMessage = String(errObj.message || errObj.description || 'Unknown error');\nconst errorStack = String(errObj.stack || '').substring(0, 500);\n\nconsole.log(`[Run Error Handler] ${workflow.name} execution ${executionId} failed at \"${execution.lastNodeExecuted || '?'}\": ${errorMessage.substring(0, 200)}`);\n\nreturn [{\n  json: {\n    run_id: runId,\n    failed_at: new Date().toISOString(),\n    workflow_name: workflow.name || '',\n    workflow_id: workflow.id || '',\n    execution_id: executionId,\n    execution_url: execution.url || '',\n    last_node: execution.lastNodeExecuted || '',\n    error_name: errorName,\n    error_message: errorMessage,\n    error_stack: errorStack\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -16
+      ],
+      "id": "841159b4-11f3-49f8-a95e-0f9744418889",
+      "name": "Build Error Row"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -608,
+        -16
+      ],
+      "id": "126e6d59-0e8d-4fc1-b4e9-c464b58a5000",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "error",
+            "workflow": "={{ $('Build Error Row').first().json.run_id.startsWith('disc_') ? 'discovery' : $('Build Error Row').first().json.run_id.startsWith('app_') ? 'application' : $('Build Error Row').first().json.run_id.startsWith('refine_') ? 'refinement' : $('Build Error Row').first().json.run_id.startsWith('cl_') ? 'cover_letter' : '' }}",
+            "run_id": "={{ $('Build Error Row').first().json.run_id }}",
+            "completed_at": "={{ $('Build Error Row').first().json.failed_at }}",
+            "database_id": "={{ $('Error Handler Config').first().json.database_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -48,
+        192
+      ],
+      "id": "a73cccaf-7926-4fab-bd0d-49221cc3e3b6",
+      "name": "Mark Error"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        224,
+        32
+      ],
+      "id": "59cb5f0f-015b-4ca6-b477-18de0903b953",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Error Handler Config').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "=run_errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "failed_at",
+              "displayName": "failed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_url",
+              "displayName": "execution_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_node",
+              "displayName": "last_node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_name",
+              "displayName": "error_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_stack",
+              "displayName": "error_stack",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -48,
+        -16
+      ],
+      "id": "585a0fda-3d87-42c7-89db-0579bb907a95",
+      "name": "Append Error Row",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3acd9ad7-54e8-4f58-9bf5-80ef28dfd6ae",
+              "name": "database_id",
+              "value": "YOUR_GOOGLE_SHEETS_DATABASE_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -416,
+        -16
+      ],
+      "id": "7e88ce07-7fd0-410d-b1cc-5980d6f29edd",
+      "name": "Error Handler Config"
+    }
+  ],
+  "connections": {
+    "Build Error Row": {
+      "main": [
+        [
+          {
+            "node": "Append Error Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mark Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Handler Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Error": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Append Error Row": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler Config": {
+      "main": [
+        [
+          {
+            "node": "Build Error Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "a30e0828-7dff-424a-adb8-0aa70e8aa699",
+  "activeVersionId": "a30e0828-7dff-424a-adb8-0aa70e8aa699",
+  "versionCounter": 130,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-18T05:59:05.896Z",
+      "createdAt": "2026-05-18T05:59:05.896Z",
+      "role": "workflow:owner",
+      "workflowId": "4bjXMpGcylUjxKXK",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version a30e0828",
+    "description": ""
+  }
+}

@@ -1,0 +1,1368 @@
+{
+  "updatedAt": "2026-06-11T00:37:28.487Z",
+  "createdAt": "2026-05-06T17:53:01.399Z",
+  "id": "RqoWxgvwzlQIoARH",
+  "name": "Job Discovery",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -816,
+        -208
+      ],
+      "id": "98850406-e7e8-4a56-8846-fd85be9e1391",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cpkOoZXkF0E55IYP",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cpkOoZXkF0E55IYP",
+          "cachedResultName": "Data Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}",
+            "mode": "discovery",
+            "parent_execution_id": "={{ $execution.id }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_execution_id",
+              "displayName": "parent_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -368,
+        -304
+      ],
+      "id": "4508d607-4d2c-48bc-ba06-30fe63a3f253",
+      "name": "Data Loader"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "KgrJxYZjAC4fxnMk",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/KgrJxYZjAC4fxnMk",
+          "cachedResultName": "Prompt Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -368,
+        -112
+      ],
+      "id": "ce7de316-622d-4a08-9a8d-970ef306e388",
+      "name": "Prompt Loader"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7000828e-f181-4331-860f-1e4b4c09339a",
+              "name": "root_folder_id",
+              "value": "={{ $env.ROOT_FOLDER_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "1f4de416-a626-423b-950b-7a8564da5351",
+              "name": "source",
+              "value": "={{ $json.body?.source || 'manual' }}",
+              "type": "string"
+            },
+            {
+              "id": "5fd22b9a-53c3-4c1d-8986-00d5587533a7",
+              "name": "run_started_at",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -592,
+        -208
+      ],
+      "id": "ec013773-ad01-4268-8ec7-1a5446e1bb0c",
+      "name": "Root Folder"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -64,
+        -224
+      ],
+      "id": "85878c58-6d10-4305-9e2e-e739b1668300",
+      "name": "Merge Init"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ev7TyCXQl8dz8fSx",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/ev7TyCXQl8dz8fSx",
+          "cachedResultName": "Job Post Processing"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "jobs": "={{ $('Job Fetcher').first().json.jobs }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "existing_job_urls": "={{ $('Data Loader').first().json.existing_job_urls }}",
+            "existing_job_roles": "={{ $('Data Loader').first().json.existing_job_roles }}",
+            "watchlist": "={{ $('Data Loader').first().json.watchlist }}"
+          },
+          "matchingColumns": [
+            "x"
+          ],
+          "schema": [
+            {
+              "id": "jobs",
+              "displayName": "jobs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "existing_job_urls",
+              "displayName": "existing_job_urls",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "existing_job_roles",
+              "displayName": "existing_job_roles",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "watchlist",
+              "displayName": "watchlist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        656,
+        -224
+      ],
+      "id": "39a05291-31ca-45a3-a1bd-6a046f7f624b",
+      "name": "Job Post Processing",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9cP8uCMDPw4xX7PF",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9cP8uCMDPw4xX7PF",
+          "cachedResultName": "Job Discovery Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $json.database_id }}",
+            "run_id": "={{ $json.run_id }}",
+            "failures": "={{ $json.failures }}",
+            "usage": "={{ $json.usage }}",
+            "scored_jobs": "={{ $json.scored_jobs }}"
+          },
+          "matchingColumns": [
+            "x"
+          ],
+          "schema": [
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "scored_jobs",
+              "displayName": "scored_jobs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "failures",
+              "displayName": "failures",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "usage",
+              "displayName": "usage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2000,
+        -352
+      ],
+      "id": "d9a5b10b-3ca5-4d6d-9093-c371996cc8df",
+      "name": "Job Discovery Recorder"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const score = $input.item.json;\nconst job = $('Split Jobs').item.json;\nconst runId = $('Data Loader').first().json.run_id || '';\nconst pricing = $('Data Loader').first().json.pricing || {};\nconst computeCost = (usage, rates) => {\n  if (!rates) return 0;\n  return (usage.input_tokens || 0) / 1e6 * (rates.input_per_million || 0) +\n         (usage.output_tokens || 0) / 1e6 * (rates.output_per_million || 0) +\n         (usage.cached_input_tokens || 0) / 1e6 * (rates.cached_input_per_million || 0) +\n         (usage.cache_write_tokens || 0) / 1e6 * (rates.cache_write_per_million || 0);\n};\nconst modelUsed = score.model_used || 'unknown';\nconst rates = pricing[modelUsed] || null;\nif (!rates) {\n  console.log(`[Log Job Result] WARNING: no pricing for model \"${modelUsed}\". Cost will be 0.`);\n}\nconst usage = {\n  input_tokens: score.tokens?.input || 0,\n  output_tokens: score.tokens?.output || 0,\n  cached_input_tokens: score.cached_input_tokens || 0,\n  cache_write_tokens: score.cache_write_tokens || 0\n};\nconst cost = computeCost(usage, rates);\n\n// Agent 10 (Job Ranker) usage â€” sourced from Summarize via Job Ranker's first\n// item. Same value carried on every emitted Log Job Result item; Prepare\n// Recorder Input picks it up once (one row per run). Cost is already computed\n// by Agent 10's Summarize so we pass the object through verbatim.\nconst a10 = $('Job Ranker').first().json.usage || null;\n\nconsole.log(`[Log Job Result] [${job.company}] ${job.title}: target=${score.overall_score}/${score.verdict}, background=${score.background_overall_score}/${score.background_verdict}, $${cost.toFixed(6)}, tokens=${usage.input_tokens}+${usage.output_tokens}, agent_10_usage=${a10 ? `${a10.model_used} ${a10.tokens?.input}in/${a10.tokens?.output}out` : 'null'}`);\n// Credit detection: did this job's scorer fail specifically on insufficient_credit?\n// (Agent 8 propagates Call LLM's error.category, including 'insufficient_credit'.)\nconst creditEvent = score.success === false && score.error?.category === 'insufficient_credit';\nreturn {\n  json: {\n    run_id: runId,\n    job: job,\n    score: {\n      overall_score: score.overall_score,\n      background_overall_score: score.background_overall_score,\n      verdict: score.verdict,\n      background_verdict: score.background_verdict,\n      dimensions: score.dimensions,\n      restrictions: score.restrictions,\n      strengths: score.strengths,\n      gaps: score.gaps,\n      rationale: score.rationale\n    },\n    credit_event: creditEvent,\n    tokens: { input: usage.input_tokens, output: usage.output_tokens },\n    cached_input_tokens: usage.cached_input_tokens,\n    cache_write_tokens: usage.cache_write_tokens,\n    cost: cost,\n    model_used: modelUsed,\n    provider_used: score.provider_used || 'unknown',\n    scored_at: new Date().toISOString(),\n    agent_10_usage: a10\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        -464
+      ],
+      "id": "f52ebf6e-064f-40be-a32a-b482981d280e",
+      "name": "Log Job Result"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9rlUL4FZMryuvHKI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9rlUL4FZMryuvHKI",
+          "cachedResultName": "Model Usage Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $json.job_result }}",
+            "database_id": "={{ $json.database_id }}"
+          },
+          "matchingColumns": [
+            "job_result"
+          ],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2000,
+        -160
+      ],
+      "id": "71c0554a-7078-4488-b128-c51345e20803",
+      "name": "Model Usage Recorder"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "pREJLEQeol4EzFpp",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/pREJLEQeol4EzFpp",
+          "cachedResultName": "Agent 8 - Discovery Scorer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_8 }}",
+            "master_doc": "={{ $('Data Loader').first().json.master_doc }}",
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "location": "={{ $json.location }}",
+            "description": "={{ $json.description }}",
+            "posted_at": "={{ $json.posted_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "posted_at",
+              "displayName": "posted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1360,
+        -464
+      ],
+      "id": "8c326f21-5b45-4d8a-965b-f5b73f1a9eee",
+      "name": "Discovery Scorer"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "run-discovery",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -816,
+        -384
+      ],
+      "id": "5d8589b3-39d3-42b4-a886-c6c9f3d56a5a",
+      "name": "Run Discovery Webhook",
+      "webhookId": "e7236ab0-769c-4648-b6e0-c60ea08e8845",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "E3u4yJkiBm3tomJn",
+          "name": "Maestro Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"run_id\": \"disc_{{ $execution.id }}\",\n  \"source\": \"{{ $('Root Folder').first().json.source }}\",\n  \"status\": \"accepted\"\n}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        304,
+        -224
+      ],
+      "id": "44bf7f6d-7932-4047-93b8-60dbd72bbd0f",
+      "name": "Respond Accepted"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "kKECKP5AxwkricJh",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/kKECKP5AxwkricJh",
+          "cachedResultName": "Job Fetcher"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "watchlist": "={{ $('Data Loader').first().json.watchlist }}",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}"
+          },
+          "matchingColumns": [
+            "x"
+          ],
+          "schema": [
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "watchlist",
+              "displayName": "watchlist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        -224
+      ],
+      "id": "067b2caf-4828-4154-abae-afd901f3048d",
+      "name": "Job Fetcher"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "19e42161-8481-47d5-a2f9-51c2be589f8a",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1024,
+        -224
+      ],
+      "id": "82576162-19d6-4eac-b655-6e1025eb087a",
+      "name": "Found Jobs"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "jobs",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        -464
+      ],
+      "id": "c132e6c9-d16b-4d54-8b87-718365cc14bc",
+      "name": "Split Jobs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "workflow": "discovery",
+            "status": "running",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "={{ $('Root Folder').first().json.source }}",
+            "started_at": "={{ $('Root Folder').first().json.run_started_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        -224
+      ],
+      "id": "9dad7e83-daf5-4839-b3e0-92fa2af112b2",
+      "name": "Mark Running"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "workflow": "discovery",
+            "status": "completed",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "=",
+            "started_at": "=",
+            "jobs_returned": "={{ String($('Prepare Recorder Input').first().json.count) }}",
+            "completed_at": "={{ new Date().toISOString() }}",
+            "credit_event": "={{ String($('Log Job Result').all().some(i => i.json.credit_event === true)) }}\n"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2576,
+        -304
+      ],
+      "id": "2e3deacc-2ef4-4fa8-b6a3-d6c75a749f18",
+      "name": "Mark Complete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collapse â€” emit one item after all per-job recording so Mark Complete fires once.\nreturn [{ json: { done: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        -304
+      ],
+      "id": "4daa62b7-0328-437f-8bf8-8d66bfb107c3",
+      "name": "Collapse"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        -304
+      ],
+      "id": "6ed4e49d-c8e8-4215-94f7-8f1b7628e3f5",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HbN1BQDIqQcaWFxb",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HbN1BQDIqQcaWFxb",
+          "cachedResultName": "Agent 10 - Job Ranker"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "jobs": "={{ $('Job Post Processing').all().map(i => ({ job_id: i.json.job_id, title: i.json.title, company: i.json.company, location: i.json.location, remote: i.json.remote })) }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "watchlist": "={{ $('Data Loader').first().json.watchlist }}",
+            "pre_ranker_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_10 }}",
+            "pricing": "={{ $('Data Loader').first().json.pricing }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "jobs",
+              "displayName": "jobs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "watchlist",
+              "displayName": "watchlist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "pre_ranker_prompt",
+              "displayName": "pre_ranker_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "pricing",
+              "displayName": "pricing",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        832,
+        -224
+      ],
+      "id": "196a439d-13e9-442e-8fef-4d4544904149",
+      "name": "Job Ranker"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Recorder Input â€” single source of truth for both recorders.\n// Emits ONE item containing the exact shapes both recorders need.\n//\n// FAT-FIELD REJOIN: the jobs flowing through the rankerâ†’scorer path are slimmed\n// (company/title/location/remote + scores), so url/source/posted_at/description_html\n// are lost by the time they reach here. We rejoin those fat fields from Job Post\n// Processing's full output, keyed on company+title+location (job_id doesn't exist\n// yet â€” it's minted in Build Discovery Row).\n\nconst items = $input.all();\nconst first = items[0]?.json || {};\nconst onTrueBranch = !!first.score;\n\n// Build a lookup of fat jobs from Job Post Processing.\nconst fatJobs = $('Job Post Processing').all().map(i => i.json);\nconst fatKey = (j) => [\n  String(j?.company || '').toLowerCase().trim(),\n  String(j?.title || '').toLowerCase().trim(),\n  String(j?.location || '').toLowerCase().trim()\n].join('||');\nconst fatById = new Map();\nfor (const fj of fatJobs) fatById.set(fatKey(fj), fj);\n\nconst FAT_FIELDS = ['url', 'source', 'posted_at', 'description_html', 'description', 'salary_text', 'employment_type'];\nconst rejoin = (slimJob) => {\n  const fat = fatById.get(fatKey(slimJob));\n  if (!fat) return slimJob;\n  const merged = { ...slimJob };\n  for (const f of FAT_FIELDS) {\n    if (merged[f] === undefined || merged[f] === null || merged[f] === '') {\n      if (fat[f] !== undefined) merged[f] = fat[f];\n    }\n  }\n  return merged;\n};\n\nlet scored_jobs;\nlet agent_10_usage;\nif (onTrueBranch) {\n  // Each item: { run_id, job, score, ... }. Rejoin fat fields into job.\n  scored_jobs = items.map(i => ({ ...i.json, job: rejoin(i.json.job || {}) }));\n  agent_10_usage = first.agent_10_usage || null;\n} else {\n  scored_jobs = [];\n  agent_10_usage = first.usage || null;\n}\n\nconst run_id      = $('Data Loader').first().json.run_id      || '';\nconst database_id = $('Data Loader').first().json.database_id || '';\nconst failures    = $('Job Fetcher').first().json.failures    || [];\nconst usage       = $('Job Fetcher').first().json.usage       || [];\nconst count       = Number($('Job Ranker').first().json.count ?? 0);\n\nconsole.log(`[Prepare Recorder Input] branch=${onTrueBranch ? 'TRUE' : 'FALSE'}, count=${count}, scored_jobs=${scored_jobs.length}, fat_lookup=${fatById.size}, failures=${failures.length}`);\n\nreturn [{\n  json: {\n    run_id,\n    database_id,\n    scored_jobs,\n    count,\n    failures,\n    usage,\n    job_result: {\n      scored_jobs,\n      agent_10_usage,\n      run_id\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        -208
+      ],
+      "id": "936adab5-ff11-429d-9c4d-34ff18745d30",
+      "name": "Prepare Recorder Input"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Root Folder": {
+      "main": [
+        [
+          {
+            "node": "Data Loader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prompt Loader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Init": {
+      "main": [
+        [
+          {
+            "node": "Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Post Processing": {
+      "main": [
+        [
+          {
+            "node": "Job Ranker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Discovery Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Job Result": {
+      "main": [
+        [
+          {
+            "node": "Prepare Recorder Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discovery Scorer": {
+      "main": [
+        [
+          {
+            "node": "Log Job Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Discovery Webhook": {
+      "main": [
+        [
+          {
+            "node": "Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Accepted": {
+      "main": [
+        [
+          {
+            "node": "Job Fetcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Fetcher": {
+      "main": [
+        [
+          {
+            "node": "Job Post Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Found Jobs": {
+      "main": [
+        [
+          {
+            "node": "Split Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Recorder Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Jobs": {
+      "main": [
+        [
+          {
+            "node": "Discovery Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Complete": {
+      "main": [
+        []
+      ]
+    },
+    "Collapse": {
+      "main": [
+        [
+          {
+            "node": "Mark Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model Usage Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Collapse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Ranker": {
+      "main": [
+        [
+          {
+            "node": "Found Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Recorder Input": {
+      "main": [
+        [
+          {
+            "node": "Job Discovery Recorder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Model Usage Recorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "4bjXMpGcylUjxKXK",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "1c8b8313-c610-4eaa-9920-d713c791895d",
+  "activeVersionId": "1c8b8313-c610-4eaa-9920-d713c791895d",
+  "versionCounter": 752,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-06T17:53:01.402Z",
+      "createdAt": "2026-05-06T17:53:01.402Z",
+      "role": "workflow:owner",
+      "workflowId": "RqoWxgvwzlQIoARH",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 1c8b8313",
+    "description": ""
+  }
+}

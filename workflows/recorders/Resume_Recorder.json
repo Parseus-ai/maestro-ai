@@ -1,0 +1,631 @@
+{
+  "updatedAt": "2026-06-11T02:00:35.507Z",
+  "createdAt": "2026-05-22T01:36:22.118Z",
+  "id": "yNLUyYrlkEmrBY7T",
+  "name": "Resume Recorder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Recorder Sub-Workflow\n// Normalizes inputs from the orchestrator's Execute Workflow call.\nconst trigger = $input.first()?.json || {};\nconst jobResult = trigger.job_result || {};\nconst config = trigger.config || {};\n// Validation\nif (!jobResult || typeof jobResult !== 'object' || !jobResult.job) {\n  throw new Error('[Recorder Set Inputs] job_result missing or invalid; expected an object with a `job` field');\n}\nif (!config || typeof config !== 'object') {\n  throw new Error('[Recorder Set Inputs] config missing or invalid');\n}\nconsole.log(`[Recorder Set Inputs] Job: ${jobResult.job?.company || 'unknown'} â€” ${jobResult.job?.title || 'unknown'}`);\nconsole.log(`[Recorder Set Inputs] config keys: ${Object.keys(config).length}`);\nreturn [{\n  json: {\n    job_result: jobResult,\n    config\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        -64
+      ],
+      "id": "dad56e8b-4b34-4d7a-8fb7-0cac9aec7bb9",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "agent_outputs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "resume_id"
+          ],
+          "schema": [
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "application_run_id",
+              "displayName": "application_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resume_id",
+              "displayName": "resume_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "verifier_output_json",
+              "displayName": "verifier_output_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "critic_output_json",
+              "displayName": "critic_output_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scorer_output_json",
+              "displayName": "scorer_output_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "generated_at",
+              "displayName": "generated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        176,
+        80
+      ],
+      "id": "3f14610c-2cf1-4433-9544-884943b773d1",
+      "name": "Record Agent Output",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Agent Outputs Rows â€” writes verifier + scorer (+ critic on original build)\n// JSON to agent_outputs, keyed by application_run_id + resume_id (version-distinct)\n// so the dashboard can read THIS version's outputs.\n// Critic: present only on the original build (source 'original'); the refine/polish\n// paths have no critic agent run, so critic_output_json stays blank there.\nconst data = $('Set Inputs').first().json.job_result || {};\nconst job = data.job || {};\nconst safeJson = (obj) => (obj && Object.keys(obj).length > 0) ? JSON.stringify(obj) : '';\n\nconst jobId = job.job_id || '';\nconst version = Number(data.resume_row?.version) || 2;\nconst verifierCombined = { resume: data.verifier || null, cover_letter: null };\n\n// Critic JSON only when the critic actually ran (original build). safeJson returns\n// '' for null/empty, so refine/polish (no critic) write blank without a guard, but\n// we gate on source explicitly so a stray critic object can't leak onto a refine row.\nconst isOriginal = data.resume_row?.source === 'original';\nconst criticJson = isOriginal ? safeJson(data.critic) : '';\n\nreturn {\n  json: {\n    url: job.url || '',\n    application_run_id: data.application_run_id || '',\n    resume_id: `${jobId}_v${version}`,\n    job_id: jobId,\n    run_id: data.run_id || '',\n    verifier_output_json: safeJson(verifierCombined),\n    critic_output_json: criticJson,\n    scorer_output_json: safeJson(data.scorer),\n    generated_at: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        80
+      ],
+      "id": "4d8e9fc3-e51f-4f3d-ad09-488380b9ca71",
+      "name": "Build Agent Outputs Rows"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Resume Row â€” writes the resume version to `resumes`.\n// Original build (v1, source 'original') and refine/polish (v2+) both flow through here.\n// resume_id = {job_id}_v{version}. drive_url blank: user saves to Drive from the\n// dashboard, which fills it.\n\nconst jr = $('Set Inputs').first().json.job_result || {};\n\n// Resume content source. The refiner was removed from the orchestrator; the\n// real resume object is jr.resume (carries `markdown` + `success`). Fall back\n// to jr.refiner for any legacy path that still populates it. Field names differ:\n// jr.resume uses `markdown`, the old refiner used `resume_markdown`.\nconst resumeObj = jr.resume || {};\nconst refiner = jr.refiner || {};\nconst resumeMarkdown = resumeObj.markdown || refiner.resume_markdown || '';\nconst resumeTokens = resumeObj.tokens || refiner.tokens || {};\n\n// Record whenever we have resume content. Skip only on explicit failure or no\n// content â€” don't gate on a `success === true` flag, since the v1 build path\n// doesn't always set one. processed_status='error' from a scorer glitch must\n// NOT discard a valid resume.\nif (resumeObj.success === false || !resumeMarkdown) {\n  console.log('[Build Resume Row] no resume markdown / resume failed â€” no resume row.');\n  return [];\n}\nconst jobId = jr.job?.job_id || '';\nif (!jobId) { console.log('[Build Resume Row] No job_id â€” skipping.'); return []; }\n\nconst scorer  = jr.scorer  || {};\nconst verifier = jr.verifier || {};\nconst row = jr.resume_row || {};\nconst version = Number(row.version) || 2;\n\nreturn [{\n  json: {\n    resume_id: `${jobId}_v${version}`,\n    job_id: jobId,\n    application_run_id: jr.application_run_id || '',\n    run_id: jr.run_id || '',\n    url: jr.job?.url || '',\n    company: jr.job?.company || '',\n    title: jr.job?.title || '',\n    version,\n    parent_resume_id: row.parent_resume_id || '',\n    source: row.source || 'refinement',\n    resume_markdown: resumeMarkdown,\n    refinement_instructions: row.refinement_instructions || '',\n    ran_verifier: verifier.ran ? 'TRUE' : 'FALSE',\n    ran_critic: (row.source === 'original' || row.source === 'polish') ? 'TRUE' : 'FALSE',\n    overall_score: (typeof scorer.overall_score === 'number') ? scorer.overall_score : '',\n    recommendation: scorer.recommendation || '',\n    score_delta: (typeof row.score_delta === 'number') ? row.score_delta : '',\n    verifier_verdict: verifier.verdict || '',\n    unsupported_count: (typeof verifier.unsupported_count === 'number') ? verifier.unsupported_count : '',\n    critic_critical_count: (row.source === 'original' && typeof jr.critic?.critical_count === 'number') ? jr.critic.critical_count : '',\n    tokens_in: resumeTokens.input || 0,\n    tokens_out: resumeTokens.output || 0,\n    cost_usd: typeof jr.refinement_cost === 'number' ? jr.refinement_cost : 0,\n    drive_url: '',\n    created_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -128
+      ],
+      "id": "861f2f85-a985-43e1-b09a-b3732acda924",
+      "name": "Build Resume Row"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "resumes",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "resume_id"
+          ],
+          "schema": [
+            {
+              "id": "resume_id",
+              "displayName": "resume_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "application_run_id",
+              "displayName": "application_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "version",
+              "displayName": "version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "parent_resume_id",
+              "displayName": "parent_resume_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "refinement_instructions",
+              "displayName": "refinement_instructions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ran_verifier",
+              "displayName": "ran_verifier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ran_critic",
+              "displayName": "ran_critic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "overall_score",
+              "displayName": "overall_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommendation",
+              "displayName": "recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "score_delta",
+              "displayName": "score_delta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "verifier_verdict",
+              "displayName": "verifier_verdict",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unsupported_count",
+              "displayName": "unsupported_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "critic_critical_count",
+              "displayName": "critic_critical_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tokens_in",
+              "displayName": "tokens_in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tokens_out",
+              "displayName": "tokens_out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cost_usd",
+              "displayName": "cost_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "drive_url",
+              "displayName": "drive_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        176,
+        -128
+      ],
+      "id": "eeff1fef-8dd5-47fe-925e-57d6e688dc6b",
+      "name": "Record Resume",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        528,
+        -32
+      ],
+      "id": "1a43b47d-2792-4890-8b97-8cc6444bbec7",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "job_result",
+              "type": "object"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "database_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -560,
+        -64
+      ],
+      "id": "26630c72-f1e0-4cdb-a9b2-5d8cd2c1c9a6",
+      "name": "Trigger"
+    }
+  ],
+  "connections": {
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Resume Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Agent Outputs Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Agent Output": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build Agent Outputs Rows": {
+      "main": [
+        [
+          {
+            "node": "Record Agent Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Resume Row": {
+      "main": [
+        [
+          {
+            "node": "Record Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Resume": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "23366894-1cde-47d3-964e-ea0d45836abd",
+  "activeVersionId": "23366894-1cde-47d3-964e-ea0d45836abd",
+  "versionCounter": 132,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-22T01:36:22.120Z",
+      "createdAt": "2026-05-22T01:36:22.120Z",
+      "role": "workflow:owner",
+      "workflowId": "yNLUyYrlkEmrBY7T",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 23366894",
+    "description": ""
+  }
+}

@@ -1,0 +1,1641 @@
+{
+  "updatedAt": "2026-06-11T22:22:13.022Z",
+  "createdAt": "2026-05-08T04:03:09.433Z",
+  "id": "W0Y9iSJxZ4ENLaJG",
+  "name": "Application Orchestrator",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1664,
+        -432
+      ],
+      "id": "f9aff713-f96b-4046-94e5-ac315f5ecbab",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stage 3: Fan out one item per job for parallel agent processing\n// Mode: Run Once for All Items\n//\n// Reads from Data Loader sub-workflow output (returns { ready_jobs, master_doc, config }).\n// Bundles master_doc AND config into each per-job item â€” preserves the original\n// flat structure (job fields at top level) for compatibility with existing agents.\nconst dataLoaderOutput = $('Data Loader').first()?.json;\n// Defensive validation\nif (!dataLoaderOutput) {\n  throw new Error('[Fan Out Plans] Data Loader output missing â€” check node name and Execute Workflow wiring');\n}\nconst rawJobs = dataLoaderOutput.ready_jobs;\nconst masterDoc = dataLoaderOutput.master_doc;\nconst config = dataLoaderOutput.config;\nif (!Array.isArray(rawJobs) || rawJobs.length === 0) {\n  console.log('[Fan Out Plans] No ready jobs to process â€” exiting cleanly');\n  return [];\n}\nif (!masterDoc || typeof masterDoc !== 'string' || masterDoc.length < 100) {\n  throw new Error(`[Fan Out Plans] master_doc missing or too short (${masterDoc?.length || 0} chars)`);\n}\nif (!config || typeof config !== 'object') {\n  throw new Error('[Fan Out Plans] config missing or invalid from Data Loader output');\n}\n// Normalize: if Data Loader returned jobs wrapped as {json: {...}}, unwrap them\nconst jobs = rawJobs.map(j => (j && typeof j === 'object' && 'json' in j) ? j.json : j);\nconsole.log(`[Fan Out Plans] Setup complete:`);\nconsole.log(`  - Jobs ready:    ${jobs.length}`);\nconsole.log(`  - Master doc:    ${masterDoc.length} chars`);\nconsole.log(`  - Config keys:   ${Object.keys(config).length}`);\nconsole.log(`[Fan Out Plans] Fanning out ${jobs.length} job(s)`);\n// Bundle master_doc AND config into each job item.\n// Job fields at top level (preserves original structure for downstream agents).\nconst fanned = jobs.map((job, idx) => ({\n  json: {\n    ...job,                 // job fields at top level\n    master_doc: masterDoc,\n    config,\n    fanout_index: idx + 1,\n    fanout_total: jobs.length\n  }\n}));\nreturn fanned;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -352
+      ],
+      "id": "589c7bcc-344e-4691-be64-3bd4c92e3fab",
+      "name": "Fan Out Plans"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Job Result â€” per-job. Reads .all() from each agent node, index-aligned.\n// Anchor = Resume Scorer (direct input). Job identity from Fan Out Plans by index.\nconst scored = $('Resume Scorer').all();\nif (!scored.length) return [];\n\nconst fanItems = $('Fan Out Plans').all();\nconst allOf = (n) => { try { return $(n).all(); } catch { console.log(`[Log Job Result] '${n}' not found`); return []; } };\nconst pick = (arr, i) => (arr[i] ? arr[i].json : null);\n\nconst dl = $('Data Loader').first().json;\nconst pricing = dl.pricing || {};\nconst runId = dl.run_id || '';\nconst config = dl.config || {};\nconst coverEnabled = String(config.enable_cover_letter_drafter).toLowerCase().trim() === 'true';\nconst promptLoader = (() => { try { return $('Prompt Loader').first()?.json; } catch { return null; } })();\nconst promptWarnings = promptLoader?.prompt_warnings || [];\n\nconst computeCost = (u, r) => !r ? 0 :\n  (u.input_tokens || 0)/1e6*(r.input_per_million||0) +\n  (u.output_tokens||0)/1e6*(r.output_per_million||0) +\n  (u.cached_input_tokens||0)/1e6*(r.cached_input_per_million||0) +\n  (u.cache_write_tokens||0)/1e6*(r.cache_write_per_million||0);\n\nconst rb = allOf('Resume Builder');\nconst clb = allOf('Cover Letter Builder');\nconst rv = allOf('Resume Verifier');\nconst clv = allOf('Cover Letter Verifier');\nconst cr = allOf('Critic');\nconst sc = allOf('Resume Scorer');\n\nconst results = [];\n\nfor (let i = 0; i < scored.length; i++) {\n  const fanOut = pick(fanItems, i) || {};\n  const agent1 = pick(rb, i);\n  const agent2 = pick(clb, i);\n  const agent3 = pick(rv, i);\n  const agent4 = pick(clv, i);\n  const agent5 = pick(cr, i);\n  const agent7 = pick(sc, i);\n\n  const missingPricing = new Set();\n  const costFor = (a, id) => {\n    if (!a) return 0;\n    const m = a.model_used || '';\n    if (m === 'skipped' || m === 'crash' || m === 'unknown') return 0;\n    const r = pricing[m] || null;\n    if (!r && m) missingPricing.add(`${id}:${m}`);\n    return computeCost({\n      input_tokens: a.tokens?.input || 0,\n      output_tokens: a.tokens?.output || 0,\n      cached_input_tokens: a.cached_input_tokens || 0,\n      cache_write_tokens: a.cache_write_tokens || 0\n    }, r);\n  };\n\n  const finalResumeMarkdown = agent1?.result?.resume_markdown || '';\n  const cost1 = costFor(agent1, 'agent_1');\n  const cost2 = costFor(agent2, 'agent_2');\n  const cost3 = costFor(agent3, 'agent_3');\n  const cost4 = costFor(agent4, 'agent_4');\n  const cost5 = costFor(agent5, 'agent_5');\n  const cost7 = costFor(agent7, 'agent_7');\n\n  const errorLog = [];\n  const addErr = (id, a) => { if (a && a.success === false && a.cascaded !== true) errorLog.push(`${id}:${a.error?.category || 'unknown'}`); };\n  addErr('agent_1', agent1); addErr('agent_2', agent2); addErr('agent_3', agent3);\n  addErr('agent_4', agent4); addErr('agent_5', agent5); addErr('agent_7', agent7);\n  for (const w of promptWarnings) errorLog.push(`prompt_loader:${w.agent||'unknown'}:${w.issue||'unknown'}`);\n  for (const e of missingPricing) errorLog.push(`data_loader:missing_pricing:${e}`);\n\n  const hasAnyFailure = [agent1,agent2,agent3,agent4,agent5,agent7].some(a => a && a.success === false);\n  const hasInsufficientCredit = [agent1,agent2,agent3,agent4,agent5,agent7].some(a => a && a.success === false && a.cascaded !== true && a.error?.category === 'insufficient_credit');\n  // Core agents whose failure makes the JOB fail (resume, verifier, critic).\n// Cover letter / cover verifier / scorer failures do NOT fail the job (per rule a/b).\nconst coreAgents = [agent1, agent3, agent5];\nconst coreCredit = coreAgents.some(a => a && a.success === false && a.cascaded !== true && a.error?.category === 'insufficient_credit');\nconst coreFailure = coreAgents.some(a => a && a.success === false);\n\nconst processed_status = coreCredit ? 'insufficient_credit' : (coreFailure ? 'error' : 'done');\n\n  const discoveryCost = Number(fanOut?.discovery_cost_usd) || 0;\n  const discoveryTokensIn = Number(fanOut?.discovery_tokens_in) || 0;\n  const discoveryTokensOut = Number(fanOut?.discovery_tokens_out) || 0;\n\n  const result = {\n    application_run_id: runId,\n    job: {\n      job_id: fanOut?.job_id || '', company: fanOut?.company || 'unknown', title: fanOut?.title || 'unknown',\n      url: fanOut?.url || '', location: fanOut?.location || '', description_html: fanOut?.description_html || '',\n      posted_at: fanOut?.posted_at || '', discovered_at: fanOut?.discovered_at || '',\n      resume_folder_url: fanOut?.resume_folder_url || '', fanout_index: fanOut?.fanout_index, fanout_total: fanOut?.fanout_total\n    },\n    resume: {\n      success: agent1?.success || false, cascaded: agent1?.cascaded || false,\n      markdown: finalResumeMarkdown, markdown_chars: finalResumeMarkdown.length, refined: false,\n      original_markdown: agent1?.result?.resume_markdown || '',\n      tokens: agent1?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent1?.cached_input_tokens || 0,\n      cache_write_tokens: agent1?.cache_write_tokens || 0, cost: cost1,\n      model_used: agent1?.model_used || 'unknown', provider_used: agent1?.provider_used || 'unknown',\n      errors: agent1?.errors || [], error: agent1?.error || null\n    },\n    cover_letter: {\n      ran: coverEnabled, success: agent2?.success || false, cascaded: agent2?.cascaded || false,\n      markdown: agent2?.result?.cover_letter_markdown || '', markdown_chars: agent2?.result?.cover_letter_markdown?.length || 0,\n      tokens: agent2?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent2?.cached_input_tokens || 0,\n      cache_write_tokens: agent2?.cache_write_tokens || 0, cost: cost2,\n      model_used: agent2?.model_used || 'unknown', provider_used: agent2?.provider_used || 'unknown',\n      errors: agent2?.errors || [], error: agent2?.error || null\n    },\n    verifier: {\n      success: agent3?.success || false, cascaded: agent3?.cascaded || false,\n      verdict: agent3?.result?.verdict || 'unknown', summary: agent3?.result?.summary || '',\n      claim_count: agent3?.result?.claim_count || 0, supported_count: agent3?.result?.supported_count || 0,\n      unsupported_count: agent3?.result?.unsupported_count || 0, issues: agent3?.result?.issues || [],\n      tokens: agent3?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent3?.cached_input_tokens || 0,\n      cache_write_tokens: agent3?.cache_write_tokens || 0, cost: cost3,\n      model_used: agent3?.model_used || 'unknown', provider_used: agent3?.provider_used || 'unknown',\n      errors: agent3?.errors || [], error: agent3?.error || null\n    },\n    cover_verifier: {\n      ran: coverEnabled, success: agent4?.success || false, cascaded: agent4?.cascaded || false,\n      verdict: agent4?.result?.verdict || 'unknown', summary: agent4?.result?.summary || '',\n      claim_count: agent4?.result?.claim_count || 0, supported_count: agent4?.result?.supported_count || 0,\n      unsupported_count: agent4?.result?.unsupported_count || 0, issues: agent4?.result?.issues || [],\n      tokens: agent4?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent4?.cached_input_tokens || 0,\n      cache_write_tokens: agent4?.cache_write_tokens || 0, cost: cost4,\n      model_used: agent4?.model_used || 'unknown', provider_used: agent4?.provider_used || 'unknown',\n      errors: agent4?.errors || [], error: agent4?.error || null\n    },\n    critic: {\n      success: agent5?.success || false, cascaded: agent5?.cascaded || false,\n      summary: agent5?.summary || '', issues: agent5?.issues || [], preserve: agent5?.preserve || [],\n      total_issues: agent5?.total_issues || 0, critical_count: agent5?.critical_count || 0,\n      major_count: agent5?.major_count || 0, minor_count: agent5?.minor_count || 0,\n      tokens: agent5?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent5?.cached_input_tokens || 0,\n      cache_write_tokens: agent5?.cache_write_tokens || 0, cost: cost5,\n      model_used: agent5?.model_used || 'unknown', provider_used: agent5?.provider_used || 'unknown',\n      errors: agent5?.errors || [], error: agent5?.error || null\n    },\n    scorer: {\n      success: agent7?.success || false, cascaded: agent7?.cascaded || false,\n      overall_score: (typeof agent7?.overall_score === 'number') ? agent7.overall_score : null,\n      recommendation: agent7?.recommendation || 'unknown', dimensions: agent7?.dimensions || {},\n      strengths: agent7?.strengths || [], gaps: agent7?.gaps || [],\n      rationale: agent7?.rationale || agent7?.score_rationale || '',\n      strengths_text: agent7?.strengths_text || '', gaps_text: agent7?.gaps_text || '',\n      score_rationale: agent7?.score_rationale || agent7?.rationale || '',\n      tokens: agent7?.tokens || { input: 0, output: 0 }, cached_input_tokens: agent7?.cached_input_tokens || 0,\n      cache_write_tokens: agent7?.cache_write_tokens || 0, cost: cost7,\n      model_used: agent7?.model_used || 'unknown', provider_used: agent7?.provider_used || 'unknown',\n      errors: agent7?.errors || [], error: agent7?.error || null\n    },\n    application_cost: cost1+cost2+cost3+cost4+cost5+cost7,\n    application_tokens: {\n      input: (agent1?.tokens?.input||0)+(agent2?.tokens?.input||0)+(agent3?.tokens?.input||0)+(agent4?.tokens?.input||0)+(agent5?.tokens?.input||0)+(agent7?.tokens?.input||0),\n      output: (agent1?.tokens?.output||0)+(agent2?.tokens?.output||0)+(agent3?.tokens?.output||0)+(agent4?.tokens?.output||0)+(agent5?.tokens?.output||0)+(agent7?.tokens?.output||0)\n    },\n    discovery_cost: discoveryCost,\n    discovery_tokens: { input: discoveryTokensIn, output: discoveryTokensOut },\n    total_cost: discoveryCost+cost1+cost2+cost3+cost4+cost5+cost7,\n    total_tokens: {\n      input: discoveryTokensIn+(agent1?.tokens?.input||0)+(agent2?.tokens?.input||0)+(agent3?.tokens?.input||0)+(agent4?.tokens?.input||0)+(agent5?.tokens?.input||0)+(agent7?.tokens?.input||0),\n      output: discoveryTokensOut+(agent1?.tokens?.output||0)+(agent2?.tokens?.output||0)+(agent3?.tokens?.output||0)+(agent4?.tokens?.output||0)+(agent5?.tokens?.output||0)+(agent7?.tokens?.output||0)\n    },\n    error_log: errorLog,\n    processed_status: processed_status,\n    credit_event: hasInsufficientCredit\n  };\n\n  console.log(`[Log Job Result] Job ${result.job.fanout_index}/${result.job.fanout_total} id=${result.job.job_id} status=${result.processed_status} score=${result.scorer.overall_score} $${result.total_cost.toFixed(4)}`);\n  results.push({ json: result });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        -368
+      ],
+      "id": "ca049ed8-0e31-4e47-bcf8-9773e3d43bb7",
+      "name": "Log Job Result"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        576,
+        -384
+      ],
+      "id": "9d4c6c8f-9e3e-44b8-83af-72fa75f33f3c",
+      "name": "Merge Branches"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cpkOoZXkF0E55IYP",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cpkOoZXkF0E55IYP",
+          "cachedResultName": "Data Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}",
+            "mode": "application",
+            "parent_execution_id": "={{ $execution.id }}",
+            "job_id": "=={{ $('Root Folder').first().json.job_ids }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_execution_id",
+              "displayName": "parent_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "job_id",
+              "displayName": "job_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1248,
+        -464
+      ],
+      "id": "1e3ceff5-6fcc-47e5-9faa-956c6921ec4d",
+      "name": "Data Loader"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "KgrJxYZjAC4fxnMk",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/KgrJxYZjAC4fxnMk",
+          "cachedResultName": "Prompt Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1264,
+        -176
+      ],
+      "id": "bed7e721-90d8-41e1-8756-e274b26e9199",
+      "name": "Prompt Loader"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7000828e-f181-4331-860f-1e4b4c09339a",
+              "name": "root_folder_id",
+              "value": "={{ $env.ROOT_FOLDER_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "7e57c771-843f-4537-8eb8-68150d632f06",
+              "name": "job_ids",
+              "value": "={{ $json.body?.job_ids || [] }}",
+              "type": "array"
+            },
+            {
+              "id": "bf5611fd-aab6-4c36-a707-f93f68ac2c88",
+              "name": "source",
+              "value": "={{ $json.body?.source || 'manual' }}",
+              "type": "string"
+            },
+            {
+              "id": "954cd922-96e9-4ee8-bc84-1173fe27680b",
+              "name": "started_at",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1456,
+        -368
+      ],
+      "id": "ad6f264d-a617-415c-b117-32859e435ef6",
+      "name": "Root Folder"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1008,
+        -352
+      ],
+      "id": "cbef28f1-9160-4eb4-a2c6-90ec174ddddb",
+      "name": "Merge Init"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "V7ZjwX3eJLRr0xHQ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/V7ZjwX3eJLRr0xHQ",
+          "cachedResultName": "Application Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $json }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "root_folder_id": "={{ $('Data Loader').first().json.root_folder_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1008,
+        -368
+      ],
+      "id": "c852e6cb-402d-4f98-aac4-3f1bb19dc1ce",
+      "name": "Application Recorder"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9rlUL4FZMryuvHKI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9rlUL4FZMryuvHKI",
+          "cachedResultName": "Model Usage Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $('Log Job Result').first().json }}",
+            "database_id": "={{ $('Data Loader').first().json.database_id }}"
+          },
+          "matchingColumns": [
+            "job_result"
+          ],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1024,
+        -160
+      ],
+      "id": "d06c8f28-27f2-4014-986b-868e7a38e569",
+      "name": "Model Usage Recorder"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "13274928-3550-4447-9662-62523561b7d5",
+              "leftValue": "={{ String($('Data Loader').first().json.config.enable_cover_letter_drafter).toLowerCase().trim() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -368,
+        -80
+      ],
+      "id": "87f01933-63ff-44f9-bb76-57560ca0b34e",
+      "name": "Cover Letter Gate"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resolve Cover Letter: convergence point for the cover-letter branch.\n// Mirrors Resolve Resume â€” keeps Merge Branches' positional combine aligned whether\n// Agent 2/4 ran or the branch was gated off by enable_cover_letter_drafter.\nconst config = $('Data Loader').first().json.config || {};\nconst coverEnabled = String(config.enable_cover_letter_drafter).toLowerCase().trim() === 'true';\n\n// Enabled path: input is Agent 4 (Cover Letter Verifier) â€” pass through unchanged so the\n// merged item is byte-identical to today. Disabled path: emit a marker.\nreturn coverEnabled\n  ? { json: $input.item.json }\n  : { json: { cover_letter_disabled: true } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -64
+      ],
+      "id": "6abbcb8d-70ed-4f02-a86a-55bfd26ff664",
+      "name": "Resolve Cover Letter"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "x9W3vg9NJxZsJZ21",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/x9W3vg9NJxZsJZ21",
+          "cachedResultName": "Agent 5 - Critic"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description_html": "={{ $('Fan Out Plans').item.json.description_html }}",
+            "resume_markdown": "={{ $('Resume Builder').item.json.result.resume_markdown }}",
+            "config": "={{ $('Fan Out Plans').item.json.config}}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_5 }}",
+            "cascade_error": "={{ $('Resume Builder').item.json.success === false ? Object.assign({}, $('Resume Builder').item.json.error || {}, {source_agent: 'agent_1'}) : null }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        96,
+        -560
+      ],
+      "id": "e791e8ba-b661-4daa-8c93-40fc070713a0",
+      "name": "Critic"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "dTZxXzWhdwqFODIU",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/dTZxXzWhdwqFODIU",
+          "cachedResultName": "Agent 1 - Resume Builder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "location": "={{ $json.location }}",
+            "url": "={{ $json.url }}",
+            "description_html": "={{ $json.description_html }}",
+            "master_doc": "={{ $json.master_doc }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_1 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -192,
+        -416
+      ],
+      "id": "da46d6fe-96a9-42d3-a99e-59c8a7c9c9ce",
+      "name": "Resume Builder"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "i5ASqDFYp6z4mbs4",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/i5ASqDFYp6z4mbs4",
+          "cachedResultName": "Agent 3 - Resume Verifier"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "master_doc": "={{ $('Fan Out Plans').item.json.master_doc }}",
+            "config": "={{ $('Fan Out Plans').item.json.config}}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_3 }}",
+            "cascade_error": "={{ $('Resume Builder').item.json.success === false ? Object.assign({}, $('Resume Builder').item.json.error || {}, {source_agent: 'agent_1'}) : null }}",
+            "resume_markdown": "={{ $('Resume Builder').item.json.result.resume_markdown }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        96,
+        -416
+      ],
+      "id": "c497d4c7-6e10-401a-9b5b-6587baeba643",
+      "name": "Resume Verifier"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "20EgqWo1GguKGGff",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/20EgqWo1GguKGGff",
+          "cachedResultName": "Agent 2 - Cover Letter Builder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "location": "={{ $json.location }}",
+            "url": "={{ $json.url }}",
+            "description_html": "={{ $json.description_html }}",
+            "master_doc": "={{ $json.master_doc }}",
+            "config": "={{ $('Fan Out Plans').item.json.config}}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_2 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -176,
+        -208
+      ],
+      "id": "3725177c-b9c6-447c-a82d-a7719f7555bb",
+      "name": "Cover Letter Builder"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HIloJhcza78DPp26",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HIloJhcza78DPp26",
+          "cachedResultName": "Agent 4- Cover Letter Verifier"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "master_doc": "={{ $('Fan Out Plans').item.json.master_doc }}",
+            "config": "={{ $('Fan Out Plans').item.json.config }}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_4 }}",
+            "cascade_error": "={{ $('Cover Letter Builder').item.json.success === false ? Object.assign({}, $('Cover Letter Builder').item.json.error || {}, {source_agent: 'agent_2'}) : null }}",
+            "cover_letter_markdown": "={{ $('Cover Letter Builder').item.json.result.cover_letter_markdown }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "cover_letter_markdown",
+              "displayName": "cover_letter_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        16,
+        -208
+      ],
+      "id": "8ea1246b-abae-4957-895e-56c10c12f71d",
+      "name": "Cover Letter Verifier"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "B6y7tXIZ43huFXOF",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/B6y7tXIZ43huFXOF",
+          "cachedResultName": "Agent 7 - Resume Scorer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "resume_markdown": "={{ $('Resume Builder').item.json.result.resume_markdown }}",
+            "description_html": "={{ $('Fan Out Plans').item.json.description_html }}",
+            "config": "={{ $('Fan Out Plans').item.json.config}}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_7 }}",
+            "cascade_error": "={{ $('Resume Builder').item.json.success === false ? Object.assign({}, $('Resume Builder').item.json.error || {}, {source_agent: 'agent_1'}) : null }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        272,
+        -416
+      ],
+      "id": "11950c2d-e00e-49a4-bdca-e506e9241a3b",
+      "name": "Resume Scorer"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "build-application",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1680,
+        -224
+      ],
+      "id": "7beceaee-72d0-43b1-84c2-e71d06a6429a",
+      "name": "Build Application Webhook",
+      "webhookId": "d7f96d43-de1a-4ad2-aadc-b2589cf5978a",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "E3u4yJkiBm3tomJn",
+          "name": "Maestro Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, accepted: true, run_id: 'app_' + $execution.id, job_count: ($('Data Loader').first().json.ready_jobs || []).length } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -640,
+        -352
+      ],
+      "id": "29604775-bbdc-4b43-90ce-28e9f6e046fc",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "workflow": "application",
+            "status": "running",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "={{ $('Root Folder').first().json.source }}",
+            "started_at": "={{ $('Root Folder').first().json.run_started_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -816,
+        -352
+      ],
+      "id": "93557795-f375-4901-8a92-e7ea35a0b7fe",
+      "name": "Mark Running"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "status": "{{ $('Log Job Result').all().some(i => (i.json.resume?.success === false) || (i.json.verifier?.success === false) || (i.json.critic?.success === false)) ? 'error' : 'complete' }}",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "=",
+            "started_at": "=",
+            "jobs_returned": "=",
+            "completed_at": "={{ new Date().toISOString() }}",
+            "workflow": "application",
+            "credit_event": "={{ String($('Log Job Result').all().some(i => i.json.credit_event === true)) }}\n"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1664,
+        -304
+      ],
+      "id": "9a9c439e-39b1-48a8-b932-c396e1506a6a",
+      "name": "Mark Complete"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collapse â€” emit one item after all per-job recording so Mark Complete fires once.\nreturn [{ json: { done: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -304
+      ],
+      "id": "3065bc25-7c04-4ca4-b854-f405233c6292",
+      "name": "Collapse"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1312,
+        -304
+      ],
+      "id": "e7fb7bbe-b9a8-479a-828d-9a8ba4b7040c",
+      "name": "Merge"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan Out Plans": {
+      "main": [
+        [
+          {
+            "node": "Resume Builder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cover Letter Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Job Result": {
+      "main": [
+        [
+          {
+            "node": "Application Recorder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Model Usage Recorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Branches": {
+      "main": [
+        [
+          {
+            "node": "Log Job Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Root Folder": {
+      "main": [
+        [
+          {
+            "node": "Data Loader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prompt Loader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Init": {
+      "main": [
+        [
+          {
+            "node": "Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Application Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cover Letter Gate": {
+      "main": [
+        [
+          {
+            "node": "Cover Letter Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Cover Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Cover Letter": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Critic": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Builder": {
+      "main": [
+        [
+          {
+            "node": "Resume Verifier",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Critic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Verifier": {
+      "main": [
+        [
+          {
+            "node": "Resume Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cover Letter Builder": {
+      "main": [
+        [
+          {
+            "node": "Cover Letter Verifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cover Letter Verifier": {
+      "main": [
+        [
+          {
+            "node": "Resolve Cover Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Scorer": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build Application Webhook": {
+      "main": [
+        [
+          {
+            "node": "Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fan Out Plans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collapse": {
+      "main": [
+        [
+          {
+            "node": "Mark Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Collapse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model Usage Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "4bjXMpGcylUjxKXK",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": [
+        12
+      ]
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "736a3aa6-00af-43ce-a782-ad7a162a4692",
+  "activeVersionId": "62dd14c6-44c3-4a5f-8099-0da9e71638d0",
+  "versionCounter": 1729,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-08T04:03:09.435Z",
+      "createdAt": "2026-05-08T04:03:09.435Z",
+      "role": "workflow:owner",
+      "workflowId": "W0Y9iSJxZ4ENLaJG",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}

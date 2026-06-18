@@ -1,0 +1,285 @@
+{
+  "updatedAt": "2026-06-04T21:51:27.971Z",
+  "createdAt": "2026-05-22T01:27:26.748Z",
+  "id": "jwFPPwRAjM76eZqG",
+  "name": "Agent 9 - Resume Fine Refiner",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        -464
+      ],
+      "id": "6c25c15f-b873-4da2-8771-24e5aef0236c",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Agent 6: format output â€” plain markdown (not JSON like Agent 5)\n// Mode: Run Once for All Items\n// Propagates structured error from Call LLM on failure.\n// Falls back to original resume markdown when refinement fails or is unusable,\n// so downstream still has a valid resume to work with.\n\nconst callLLM = $('Call LLM').first().json;\nconst originalMarkdown = $('Set Inputs').first().json.resume_markdown || '';\n\n// Call LLM failed â€” propagate error, fall back to original\nif (callLLM.success === false) {\n  console.log(`[Agent 6] LLM call failed: ${callLLM.error?.category || 'unknown'} â€” ${callLLM.error?.message || 'no message'}`);\n  console.log(`[Agent 6] Falling back to original resume markdown (${originalMarkdown.length} chars)`);\n  return {\n    json: {\n      success: false,\n      resume_markdown: originalMarkdown,\n      refined: false,\n      tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n      cached_input_tokens: callLLM.cached_input_tokens || 0,\n      cache_write_tokens: callLLM.cache_write_tokens || 0,\n      model_used: callLLM.model_used || 'unknown',\n      provider_used: callLLM.provider_used || 'unknown',\n      errors: [...(callLLM.errors || [])],\n      error: callLLM.error || {\n        category: 'unknown',\n        type: 'unknown',\n        message: 'Call LLM returned success: false with no error object',\n        provider: callLLM.provider_used || 'unknown',\n        model: callLLM.model_used || 'unknown'\n      }\n    }\n  };\n}\n\n// Normal path: parse refined markdown from content\nconst response = $input.item.json;\nconst text = response.text || response.content || response.response || response.output_text || response.completion || '';\n\nconst parseErrors = [];\nlet refinedMarkdown = '';\n\nif (!text) {\n  parseErrors.push(`No text returned from Call LLM. Keys: ${Object.keys(response).join(', ')}`);\n  console.log(`[Agent 9] ${parseErrors[parseErrors.length - 1]}`);\n} else {\n  refinedMarkdown = String(text).trim();\n  // Strip markdown code fences if the LLM wrapped the output (defensive)\n  refinedMarkdown = refinedMarkdown\n    .replace(/^```(?:markdown|md)?\\s*/i, '')\n    .replace(/\\s*```\\s*$/i, '')\n    .trim();\n}\n\n// Quality checks: too short OR identical to input\nconst tooShort = refinedMarkdown.length <= 100;\nconst identicalToOriginal = refinedMarkdown.length > 0 && refinedMarkdown === originalMarkdown;\nconst refined = !tooShort && !identicalToOriginal;\n\nlet error = null;\nif (parseErrors.length > 0) {\n  error = {\n    category: 'output_quality',\n    type: 'empty_output',\n    message: parseErrors.join('; '),\n    provider: callLLM.provider_used || 'unknown',\n    model: callLLM.model_used || 'unknown'\n  };\n} else if (tooShort) {\n  parseErrors.push(`Refined output too short (${refinedMarkdown.length} chars)`);\n  error = {\n    category: 'output_quality',\n    type: 'short_output',\n    message: parseErrors[parseErrors.length - 1],\n    provider: callLLM.provider_used || 'unknown',\n    model: callLLM.model_used || 'unknown'\n  };\n} else if (identicalToOriginal) {\n  parseErrors.push('Refined output identical to original');\n  error = {\n    category: 'output_quality',\n    type: 'no_change',\n    message: parseErrors[parseErrors.length - 1],\n    provider: callLLM.provider_used || 'unknown',\n    model: callLLM.model_used || 'unknown'\n  };\n}\n\nconst success = refined;\n\nconsole.log(`[Agent 9] Refined: ${refined}, length: ${refinedMarkdown.length} chars`);\nconsole.log(`[Agent 9] Tokens: ${callLLM.input_tokens || 0}in + ${callLLM.output_tokens || 0}out + ${callLLM.cached_input_tokens || 0}cached + ${callLLM.cache_write_tokens || 0}cache_write`);\n\nreturn {\n  json: {\n    success,\n    resume_markdown: refined ? refinedMarkdown : originalMarkdown,\n    refined,\n    tokens: { input: callLLM.input_tokens || 0, output: callLLM.output_tokens || 0 },\n    cached_input_tokens: callLLM.cached_input_tokens || 0,\n    cache_write_tokens: callLLM.cache_write_tokens || 0,\n    model_used: callLLM.model_used || 'unknown',\n    provider_used: callLLM.provider_used || 'unknown',\n    errors: parseErrors,\n    error\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        -448
+      ],
+      "id": "390054d5-6624-42e3-a2fa-fef60e38a95d",
+      "name": "Format output"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Set Inputs â€” Agent 9: Fine Refiner (user-instruction driven)\n// Model/provider/max_tokens are config-only (config.*_refiner), like every other agent.\n// The dashboard no longer sends provider/model/max_tokens; config is the single source of truth.\nconst trigger = $input.item.json;\n\nfunction strip(val) {\n  if (val === null || val === undefined) return '';\n  if (typeof val !== 'string') return val;\n  let cleaned = val;\n  while (cleaned.length > 0 && cleaned.charAt(0) === '=') cleaned = cleaned.substring(1);\n  return cleaned;\n}\n\nconst config = trigger.config || {};\nconst systemPrompt = strip(trigger.system_prompt);\nconst descriptionHtml = strip(trigger.description_html);\nconst resumeMarkdown = strip(trigger.resume_markdown);\nconst masterDoc = strip(trigger.master_doc);\nconst refinementInstructions = strip(trigger.user_command);\n\n// Optional prior verifier (from the previous version). May arrive as Object or JSON-string.\nlet verifier = trigger.verifier;\nif (typeof verifier === 'string') {\n  let raw = verifier;\n  while (raw.length > 0 && raw.charAt(0) === '=') raw = raw.substring(1);\n  try { verifier = JSON.parse(raw); }\n  catch (e) { console.log('[Agent 9 Set Inputs] verifier not parseable JSON, defaulting to empty'); verifier = {}; }\n}\nverifier = verifier || {};\nif (verifier.result && typeof verifier.result === 'object') verifier = verifier.result;\n\n// Provider / model / max_tokens are config-only (config.*_refiner). Throw loud if missing.\nconst provider = strip(config.provider_refiner);\nif (!provider) {\n  throw new Error('[Agent 9] config.provider_refiner is required. Set it in your config sheet (anthropic | openai | gemini).');\n}\nconst model = strip(config.model_refiner);\nif (!model) {\n  throw new Error('[Agent 9] config.model_refiner is required. Set it in your config sheet.');\n}\nconst maxTokens = Number(config.max_tokens_refiner);\nif (!maxTokens || Number.isNaN(maxTokens)) {\n  throw new Error('[Agent 9] config.max_tokens_refiner is required and must be a number.');\n}\n\nif (!refinementInstructions) {\n  throw new Error('[Agent 9] refinement_instructions is required for refine mode.');\n}\n\nconsole.log(`[Agent 9 Set Inputs] resume: ${resumeMarkdown.length} chars, master_doc: ${masterDoc.length} chars, instructions: ${refinementInstructions.length} chars, prior verifier issues: ${(verifier.issues || []).length}, provider: ${provider}, model: ${model}`);\n\nreturn {\n  json: {\n    config,\n    system_prompt: systemPrompt,\n    description_html: descriptionHtml,\n    resume_markdown: resumeMarkdown,\n    master_doc: masterDoc,\n    refinement_instructions: refinementInstructions,\n    verifier,\n    provider,\n    model,\n    max_tokens: maxTokens\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -448
+      ],
+      "id": "2f4e7578-7585-45df-9460-b96665578cde",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "mxnzrmY5JgwI2DNY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/mxnzrmY5JgwI2DNY",
+          "cachedResultName": "Call LLM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider": "=={{ $json.provider }}",
+            "model": "=={{ $json.model }}",
+            "system": "=={{ $json.system }}",
+            "user_message": "=={{ $json.user_message }}",
+            "max_tokens": "=={{ Number($json.max_tokens) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "model",
+              "displayName": "model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "system",
+              "displayName": "system",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "user_message",
+              "displayName": "user_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "max_tokens",
+              "displayName": "max_tokens",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -48,
+        -448
+      ],
+      "id": "d5400a88-7f81-4f44-872b-7c2fe3b81b10",
+      "name": "Call LLM",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build Prompt â€” Agent 9: Fine Refiner (user-instruction driven)\nconst input = $input.item.json;\nconst systemPrompt = input.system_prompt || '';\nconst masterDoc = input.master_doc || '';\nconst resumeMarkdown = input.resume_markdown || '';\nconst verifier = input.verifier || {};\nconst descriptionHtml = input.description_html || '';\nconst instructions = input.refinement_instructions || '';\n\nif (!systemPrompt || systemPrompt.length < 200) {\n  throw new Error(`[Agent 9] system_prompt missing or too short (${systemPrompt.length} chars). Check Prompt Loader / prompts tab and orchestrator mapping.`);\n}\nif (!resumeMarkdown || resumeMarkdown.length < 100) {\n  throw new Error(`[Agent 9] resume_markdown missing or too short (${resumeMarkdown.length} chars). Check parent_resume_markdown in the request.`);\n}\nif (!masterDoc || masterDoc.length < 200) {\n  throw new Error(`[Agent 9] master_doc missing or too short (${masterDoc.length} chars). Check Data Loader output.`);\n}\nif (!instructions) {\n  throw new Error('[Agent 9] refinement_instructions missing â€” required for refine mode.');\n}\n\nconst OUTPUT_CONTRACT = `## OUTPUT CONTRACT\n- Output ONLY the refined resume markdown.\n- Do NOT wrap in JSON or any envelope.\n- Do NOT prepend or append commentary, preamble, or summary.\n- Start directly with the resume's first line (the tagline beginning with '# ').\n- Preserve the original markdown structure unless the instructions explicitly ask to restructure.\n- Output must be 100% faithful to the master doc â€” no invented facts, no embellishments.\n- Apply the candidate's revision instructions as the primary driver.\n\n## Professional Experience format (required for rendering)\n\nEach role must follow this exact structure:\n\n### Company Name | Role Title | Start Year â€“ End Year\n\n*One-line scope summary. No metrics, no bullets.*\n\n- Bullet (action verb start, quantified where possible)\n\nRole header line must:\n- Start with \\`### \\` (the h3 marker â€” required for proper styling)\n- Use \\` | \\` (space-pipe-space) as the separator between company, title, and years\n- Use \\` â€“ \\` (en-dash with spaces) between start and end years\n- Contain NO bold or italic markdown â€” the renderer adds styling\n\nThe scope line directly under the role header must:\n- Be wrapped in \\`*...*\\` for italic\n- Be one line, no wrapping\n- Contain NO metrics and NO bullet marker (\\`-\\` or \\`*\\`)`;\n\n// Prior verifier is optional â€” include the block only if it carries findings.\nconst hasVerifier = verifier && Array.isArray(verifier.issues) && verifier.issues.length > 0;\nconst verifierBlock = hasVerifier\n  ? `\\n\\n# PRIOR VERIFIER FINDINGS (from the previous version â€” correct any that still apply, non-negotiable)\\n${JSON.stringify(verifier, null, 2)}`\n  : '';\n\nconst userMessage = `# JOB DESCRIPTION\n${descriptionHtml}\n\n# CANDIDATE MASTER DOCUMENT\n${masterDoc}\n\n# CURRENT RESUME (to be revised)\n${resumeMarkdown}\n\n# REVISION INSTRUCTIONS (from the candidate â€” the primary driver of this revision)\n${instructions}${verifierBlock}\n\n${OUTPUT_CONTRACT}`;\n\nconsole.log(`[Agent 9 Build Prompt] system_prompt: ${systemPrompt.length} chars, user_message: ${userMessage.length} chars, instructions: ${instructions.length} chars, prior verifier: ${hasVerifier ? verifier.issues.length + ' issues' : 'none'}`);\n\nreturn {\n  json: {\n    system_prompt: systemPrompt,\n    user_message: userMessage,\n    provider: input.provider,\n    model: input.model,\n    max_tokens: input.max_tokens || 8192\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -448
+      ],
+      "id": "a7314797-fb27-440d-b4e1-0251e5ac73f8",
+      "name": "Build Prompt"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "description_html"
+            },
+            {
+              "name": "resume_markdown"
+            },
+            {
+              "name": "master_doc"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "system_prompt"
+            },
+            {
+              "name": "verifier",
+              "type": "object"
+            },
+            {
+              "name": "user_command"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -832,
+        -624
+      ],
+      "id": "13e6795e-b15d-419b-8d25-484dcc2683ac",
+      "name": "Trigger"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LLM": {
+      "main": [
+        [
+          {
+            "node": "Format output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "1e2226b3-d676-4925-903f-262d6ccb7573",
+  "activeVersionId": "1e2226b3-d676-4925-903f-262d6ccb7573",
+  "versionCounter": 41,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-22T01:27:26.750Z",
+      "createdAt": "2026-05-22T01:27:26.750Z",
+      "role": "workflow:owner",
+      "workflowId": "jwFPPwRAjM76eZqG",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 1e2226b3",
+    "description": ""
+  }
+}

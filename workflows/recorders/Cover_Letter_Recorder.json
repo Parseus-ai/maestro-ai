@@ -1,0 +1,185 @@
+{
+  "updatedAt": "2026-06-08T23:35:34.163Z",
+  "createdAt": "2026-06-05T20:15:35.537Z",
+  "id": "Awz7xCEyHtRmkY8k",
+  "name": "Cover Letter Recorder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Cover Letter Recorder Sub-Workflow\n// Normalizes inputs from the orchestrator's Execute Workflow call.\nconst trigger = $input.first()?.json || {};\nconst jobResult = trigger.job_result || {};\nconst config = trigger.config || {};\n// Validation\nif (!jobResult || typeof jobResult !== 'object' || !jobResult.job) {\n  throw new Error('[Cover Recorder Set Inputs] job_result missing or invalid; expected an object with a `job` field');\n}\nif (!config || typeof config !== 'object') {\n  throw new Error('[Cover Recorder Set Inputs] config missing or invalid');\n}\nconsole.log(`[Cover Recorder Set Inputs] Job: ${jobResult.job?.company || 'unknown'} â€” ${jobResult.job?.title || 'unknown'}`);\nreturn [{\n  json: {\n    job_result: jobResult,\n    config\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        -64
+      ],
+      "id": "ea0bde33-07e8-4181-9d73-ddb3614363e1",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "job_result",
+              "type": "object"
+            },
+            {
+              "name": "config",
+              "type": "object"
+            },
+            {
+              "name": "database_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -560,
+        -64
+      ],
+      "id": "dc4e2ffb-2a8f-4b36-bccd-71737058d31f",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Cover Letter Row â€” writes the cover letter version to `cover_letters`.\n// Original build (v1, source 'original') and refinement (v2+, source 'refinement')\n// both flow through this node via jr.cover_letter_row, mirroring Build Resume Row.\n// cover_letter_id = {job_id}_v{version}. drive_url blank: user saves to Drive from\n// the dashboard, which fills it.\n//\n// Gated: only writes a row when the cover letter actually ran AND succeeded with\n// content. Disabled/failed â†’ NO row (status is read from model_usage.status on the\n// agent_2/agent_11 row, not from this tab).\n\nconst jr = $('Set Inputs').first().json.job_result || {};\n\nif (jr.processed_status !== 'done') {\n  console.log('[Build Cover Letter Row] processed_status != done â€” no cover letter row.');\n  return [];\n}\nconst jobId = jr.job?.job_id || '';\nif (!jobId) { console.log('[Build Cover Letter Row] No job_id â€” skipping.'); return []; }\n\nconst cover = jr.cover_letter || {};\nconst coverVerifier = jr.cover_verifier || {};\nconst row = jr.cover_letter_row || {};\n\n// Only record when the cover letter was enabled, ran, succeeded, and has content.\nif (!cover.ran || !cover.success || !cover.markdown) {\n  console.log(`[Build Cover Letter Row] No cover letter artifact (ran=${cover.ran}, success=${cover.success}, chars=${cover.markdown?.length || 0}) â€” no row.`);\n  return [];\n}\n\nconst version = Number(row.version) || 1;\n\nreturn [{\n    json: {\n      cover_letter_id: `${jobId}_v${version}`,\n      job_id: jobId,\n      application_run_id: jr.application_run_id || '',\n      run_id: jr.run_id || '',\n      url: jr.job?.url || '',\n      company: jr.job?.company || '',\n      title: jr.job?.title || '',\n      version,\n      parent_cover_letter_id: row.parent_cover_letter_id || '',\n      source: row.source || 'original',\n      cover_letter_markdown: cover.markdown || '',\n      refinement_instructions: row.refinement_instructions || '',\n      ran_verifier: coverVerifier.ran ? 'TRUE' : 'FALSE',\n      verifier_verdict: coverVerifier.verdict || '',\n      unsupported_count: (typeof coverVerifier.unsupported_count === 'number') ? coverVerifier.unsupported_count : '',\n      verifier_output_json: coverVerifier.ran ? JSON.stringify(coverVerifier) : '',\n      tokens_in: cover.tokens?.input || 0,\n      tokens_out: cover.tokens?.output || 0,\n      cost_usd: (typeof cover.cost === 'number') ? cover.cost : 0,\n      drive_url: '',\n      created_at: new Date().toISOString()\n    }\n  }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        -64
+      ],
+      "id": "e2503fe0-08e1-4340-8095-961f54947968",
+      "name": "Build Cover Letter Row"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "cover_letters",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "cover_letter_id"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        128,
+        -64
+      ],
+      "id": "aed7a957-5a51-41e8-8ece-b07051f10579",
+      "name": "Record Cover Letter",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Build Cover Letter Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cover Letter Row": {
+      "main": [
+        [
+          {
+            "node": "Record Cover Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Cover Letter": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "44e32033-3158-4cad-99cd-da6acc1fe2ef",
+  "activeVersionId": "44e32033-3158-4cad-99cd-da6acc1fe2ef",
+  "versionCounter": 45,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-06-05T20:15:35.542Z",
+      "createdAt": "2026-06-05T20:15:35.542Z",
+      "role": "workflow:owner",
+      "workflowId": "Awz7xCEyHtRmkY8k",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 44e32033",
+    "description": ""
+  }
+}

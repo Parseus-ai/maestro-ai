@@ -1,0 +1,406 @@
+{
+  "updatedAt": "2026-05-29T20:56:26.558Z",
+  "createdAt": "2026-05-15T21:03:21.746Z",
+  "id": "9cP8uCMDPw4xX7PF",
+  "name": "Job Discovery Recorder",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        -128
+      ],
+      "id": "1a9f7901-6f2d-46e0-a4d6-e27c611084f4",
+      "name": "When clicking â€˜Execute workflowâ€™"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "database_id"
+            },
+            {
+              "name": "scored_jobs",
+              "type": "array"
+            },
+            {
+              "name": "run_id"
+            },
+            {
+              "name": "failures",
+              "type": "array"
+            },
+            {
+              "name": "usage",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -496,
+        -320
+      ],
+      "id": "06a393bb-6bf7-406e-8858-4f2afa5734d1",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nconst job = data.job || {};\nconst score = data.score || {};\nconst runId = $('Trigger').first().json.run_id || '';\nconst tokens = data.tokens || { input: 0, output: 0 };\nconst cost = typeof data.cost === 'number' ? data.cost : 0;\nconst modelUsed = data.model_used || 'unknown';\n\n// job_id: stable 8-char base62 id, minted once here (the single point a job\n// first becomes a persisted row). Carried by every downstream consumer; never\n// regenerated. This node runs once-per-item, so each job gets its own id.\nfunction makeJobId() {\n  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';\n  let id = '';\n  for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * 62)];\n  return 'job_' + id;\n}\nconst jobId = makeJobId();\n\n// Serialize each dimension's {target, background} sub-scores as a JSON cell.\n// Empty string for missing/malformed dimensions (preserves previous null-safety).\nconst dimCell = (key) => {\n  const v = (score.dimensions || {})[key];\n  if (!v || typeof v !== 'object') return '';\n  return JSON.stringify({\n    target: v.target ?? null,\n    background: v.background ?? null\n  });\n};\n\nconst restrictionsArr = Array.isArray(score.restrictions) ? score.restrictions : [];\nconst restrictionsText = restrictionsArr\n  .map(r => (r && r.detail) ? String(r.detail).trim() : '')\n  .filter(s => s)\n  .join('. ');\nconst restrictionsJson = JSON.stringify(restrictionsArr);\n\n// Strengths and gaps are {target: [...], background: [...]} â€” serialize as JSON cells.\nconst sanitize = (obj) => ({\n  target: (obj && Array.isArray(obj.target)) ? obj.target : [],\n  background: (obj && Array.isArray(obj.background)) ? obj.background : []\n});\nconst strengthsJson = JSON.stringify(sanitize(score.strengths));\nconst gapsJson = JSON.stringify(sanitize(score.gaps));\n\nconst descSource = String(job.description || job.description_html || '');\nconst descClean = descSource.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\nconst jdSummary = descClean.slice(0, 200);\n\nconst row = {\n  discovery_run_id: runId,\n  company: job.company || '',\n  title: job.title || '',\n  url: job.url || '',\n  description_html: job.description_html || '',\n  jd_summary: jdSummary,\n  location: job.location || '',\n  remote: (job.remote === true || String(job.remote).toLowerCase() === 'true') ? 'TRUE' : '',\n  salary_text: job.salary_text || '',\n  source: job.source || '',\n  posted_at: job.posted_at || '',\n  discovered_at: new Date().toISOString(),\n  discovery_tokens_in: tokens.input || 0,\n  discovery_tokens_out: tokens.output || 0,\n  discovery_cost_usd: Number(cost.toFixed(6)),\n  discovery_model_used: modelUsed,\n  build_application: '',\n  // Target-driven (primary) verdict and score â€” drives the table badge\n  overall_score: (typeof score.overall_score === 'number') ? score.overall_score : '',\n  verdict: score.verdict || '',\n  // Background-driven scoring for the side-by-side comparison popup\n  background_overall_score: (typeof score.background_overall_score === 'number') ? score.background_overall_score : '',\n  background_verdict: score.background_verdict || '',\n  jd_score_rationale: score.rationale || '',\n  // Dimension cells: {\"target\":N,\"background\":N}\n  title_match: dimCell('title_match'),\n  level_match: dimCell('level_match'),\n  role_type_match: dimCell('role_type_match'),\n  domain_match: dimCell('domain_match'),\n  location_match: dimCell('location_match'),\n  salary_signal: dimCell('salary_signal'),\n  // Restrictions (anchor-agnostic â€” same flat shape as before)\n  restrictions_text: restrictionsText,\n  restrictions_json: restrictionsJson,\n  // Strengths and gaps: {\"target\":[...],\"background\":[...]}\n  strengths: strengthsJson,\n  gaps: gapsJson,\n  job_id: jobId\n};\n\nconsole.log(`[Build Discovery Row] run=${runId} job_id=${jobId} [${row.company}] ${row.title}: target=${row.overall_score}/${row.verdict}, background=${row.background_overall_score}/${row.background_verdict}, $${row.discovery_cost_usd.toFixed(6)}`);\n\nreturn { json: row };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -304
+      ],
+      "id": "a15ac481-aa51-436f-bed0-47e9877c96ab",
+      "name": "Build Discovery Row"
+    },
+    {
+      "parameters": {
+        "jsCode": "const scored = $('Trigger').first().json.scored_jobs || [];\nif (scored.length === 0) {\n  console.log('[Recorder] No scored jobs to write');\n  return [];\n}\nconsole.log(`[Recorder] Writing ${scored.length} scored jobs`);\nreturn scored.map(s => ({ json: s }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        -304
+      ],
+      "id": "419b5c6c-dd13-40e3-ad89-71cc5825af87",
+      "name": "Split Scored Jobs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const failures = $('Trigger').first().json.failures || [];\nif (failures.length === 0) {\n  console.log('[Recorder] No failures to write');\n  return [];\n}\nconsole.log(`[Recorder] Writing ${failures.length} failures`);\nreturn failures.map(f => ({ json: f }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        -128
+      ],
+      "id": "0a582395-6af8-4fd3-ba4b-8d14e18866b9",
+      "name": "Split Failures"
+    },
+    {
+      "parameters": {
+        "jsCode": "const usage = $('Trigger').first().json.usage || [];\nif (usage.length === 0) {\n  console.log('[Recorder] No usage records to write');\n  return [];\n}\nconsole.log(`[Recorder] Writing ${usage.length} usage records`);\nreturn usage.map(u => ({ json: u }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        64
+      ],
+      "id": "a76be5fe-2908-45c0-921d-79a997cbab5f",
+      "name": "Split Usage"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "jsearch_usage",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16,
+        64
+      ],
+      "id": "f01234a1-4bec-41ea-9a72-fb0015c47d2a",
+      "name": "Record JSearch Usage",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "slug_failures",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        32,
+        -128
+      ],
+      "id": "27751362-de19-4fb4-bcbc-af9a03b8d98a",
+      "name": "Record Slug Failures",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Trigger').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "jobs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        -304
+      ],
+      "id": "3c2c1422-3bca-4d8a-873b-3fc28fd09490",
+      "name": "Record Discovered Jobs",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        -176
+      ],
+      "id": "32041422-81d1-440a-b670-39dc7bf7ec1b",
+      "name": "Merge"
+    }
+  ],
+  "connections": {
+    "When clicking â€˜Execute workflowâ€™": {
+      "main": [
+        [
+          {
+            "node": "Split Scored Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Failures",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Split Scored Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Failures",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Discovery Row": {
+      "main": [
+        [
+          {
+            "node": "Record Discovered Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Scored Jobs": {
+      "main": [
+        [
+          {
+            "node": "Build Discovery Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Failures": {
+      "main": [
+        [
+          {
+            "node": "Record Slug Failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Usage": {
+      "main": [
+        [
+          {
+            "node": "Record JSearch Usage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Slug Failures": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Record Discovered Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record JSearch Usage": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "d567aabe-1dbb-48b7-a6d9-804ae0f76fa4",
+  "activeVersionId": "d567aabe-1dbb-48b7-a6d9-804ae0f76fa4",
+  "versionCounter": 187,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-15T21:03:21.747Z",
+      "createdAt": "2026-05-15T21:03:21.747Z",
+      "role": "workflow:owner",
+      "workflowId": "9cP8uCMDPw4xX7PF",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version d567aabe",
+    "description": ""
+  }
+}

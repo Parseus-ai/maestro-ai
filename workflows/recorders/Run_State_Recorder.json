@@ -1,0 +1,620 @@
+{
+  "name": "Run State Recorder",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        48
+      ],
+      "id": "291cc5c0-cda9-423a-9fb5-b4f1ce1008f8",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "workflow"
+            },
+            {
+              "name": "status"
+            },
+            {
+              "name": "run_id"
+            },
+            {
+              "name": "source"
+            },
+            {
+              "name": "started_at"
+            },
+            {
+              "name": "completed_at"
+            },
+            {
+              "name": "jobs_returned"
+            },
+            {
+              "name": "database_id"
+            },
+            {
+              "name": "credit_event"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -480,
+        -80
+      ],
+      "id": "32f4a7ca-2cae-41b5-b3a2-872a74899c48",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "run_state",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "state_key"
+          ],
+          "schema": [
+            {
+              "id": "state_key",
+              "displayName": "state_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        416,
+        -80
+      ],
+      "id": "96a3c991-554a-4f11-b17e-1bedae3e8831",
+      "name": "Record Run State",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs — Run State Recorder\nconst t = $input.first()?.json || {};\nconst str = (v) => (v === undefined || v === null) ? '' : String(v);\n// Strip a leading '=' that n8n can prepend to typed Workflow Inputs crossing the\n// Execute Workflow boundary. Without this, workflow='=discovery' → state_key\n// '=discovery_current' → Google Sheets writes '#NAME?' (broken formula).\nconst stripEq = (v) => { let s = str(v); while (s.charAt(0) === '=') s = s.slice(1); return s; };\n\nconst databaseId = stripEq(t.database_id);\nif (!databaseId) throw new Error('[Run State Set Inputs] database_id missing; the calling workflow must pass it');\nconst workflow = stripEq(t.workflow);\nif (!workflow) throw new Error('[Run State Set Inputs] workflow missing (e.g. \"discovery\")');\n\nconst creditEvent = t.credit_event === true || str(t.credit_event).toLowerCase() === 'true';\n\nreturn [{\n  json: {\n    database_id: databaseId,\n    workflow,\n    status: stripEq(t.status).toLowerCase(),\n    run_id: stripEq(t.run_id),\n    source: stripEq(t.source),\n    started_at: stripEq(t.started_at),\n    completed_at: stripEq(t.completed_at),\n    jobs_returned: stripEq(t.jobs_returned),\n    current_key: `${workflow}_current`,\n    last_key: `${workflow}_last`,\n    credit_event: creditEvent\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        0
+      ],
+      "id": "f535a1e5-f65d-4da5-b673-a3eb8c699677",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Rows — Run State Recorder\n// running   → write/refresh the current slot\n// completed → promote the existing current row to the last slot (preserving its\n//             started_at / run_id / source), then clear the current slot.\n// error     → same promotion as completed, but the last slot records status 'error'\n//             so failure-detection can distinguish a crash from a clean finish.\nconst inp = $('Set Inputs').first().json;\nconst existing = $('Read Current').first()?.json || {};\nconst dbId = inp.database_id;\nconst workflow = inp.workflow;\n\nif (inp.status === 'running') {\n  return [{\n    json: {\n      database_id: dbId,\n      state_key: inp.current_key,\n      workflow,\n      status: 'running',\n      run_id: inp.run_id,\n      source: inp.source,\n      started_at: inp.started_at,\n      completed_at: '',\n      jobs_returned: ''\n    }\n  }];\n}\n\n// completed | error: promote current → last (preserving its identity), then clear current.\n// The last slot's status reflects the terminal outcome ('completed' or 'error').\nconst terminalStatus = inp.status === 'error' ? 'error' : 'completed';\nconst startedAt = existing.started_at || inp.started_at || '';\nconst runId     = existing.run_id     || inp.run_id     || '';\nconst source    = existing.source     || inp.source     || '';\n\nreturn [\n  {\n    json: {\n      database_id: dbId,\n      state_key: inp.last_key,\n      workflow,\n      status: terminalStatus,\n      run_id: runId,\n      source,\n      started_at: startedAt,\n      completed_at: inp.completed_at,\n      jobs_returned: inp.jobs_returned\n    }\n  },\n  {\n    json: {\n      database_id: dbId,\n      state_key: inp.current_key,\n      workflow,\n      status: 'idle',\n      run_id: '',\n      source: '',\n      started_at: '',\n      completed_at: '',\n      jobs_returned: ''\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -80
+      ],
+      "id": "4c1405e1-2e27-4c0a-8fd6-62aba8959f15",
+      "name": "Build Rows"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Set Inputs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "run_state",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "state_key",
+              "lookupValue": "={{ $('Set Inputs').first().json.current_key }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16,
+        -80
+      ],
+      "id": "d7a887ff-1e7c-4fe0-9b59-9cf3afb0908c",
+      "name": "Read Current",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        688,
+        -32
+      ],
+      "id": "c8056545-81f4-40de-a24a-b7f2db473645",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Set Inputs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "credit_status",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "id",
+              "lookupValue": "=global"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16,
+        112
+      ],
+      "id": "a31fa32a-5a43-4f58-bdd0-679039d99f7c",
+      "name": "Read Credit Status",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Credit Row — Run State Recorder (credit_status branch)\n// Maintains a SINGLE global row in credit_status via read-modify-write so the\n// dashboard can answer \"is there an unresolved credit problem?\" with one read:\n// show warning iff last_credit_event_at > last_success_at.\n//\n// Fires only on TERMINAL events:\n//   - successful completion        → refresh last_success_at (proves credit is back)\n//   - credit_event === true        → refresh last_credit_event_at + workflow + run_id\n// A single completed-with-credit-failure run updates BOTH (jobs 1-3 saved = success,\n// job 4 ran out = credit event), which correctly leaves the warning ON because the\n// event timestamp will be >= the success timestamp.\n// Skips: running (not terminal) and plain error (a crash, not a credit issue).\n// Build Credit Row — Run State Recorder (credit_status branch)\n// Maintains a SINGLE global row in credit_status via read-modify-write so the\n// dashboard can answer \"is there an unresolved credit problem?\" with one read.\n// NOTE: the dashboard warning is now cleared ONLY by the user's confirm button,\n// which writes credit_resolved_at (show warning iff last_credit_event_at > credit_resolved_at).\n// last_success_at is still maintained here for diagnostics but is NO LONGER the kill-switch.\n//\n// Fires only on TERMINAL events:\n//   - successful completion        → refresh last_success_at\n//   - credit_event === true        → refresh last_credit_event_at + workflow + run_id\n// Skips: running (not terminal) and plain error (a crash, not a credit issue).\n\nconst inp = $('Set Inputs').first().json;\nconst existing = $('Read Credit Status').first()?.json || {};\n\nconst status = inp.status;\nconst isTerminalSuccess = (status !== 'running' && status !== 'error' && status !== '');\nconst isCreditEvent = inp.credit_event === true;\n\n// Nothing credit-relevant happened on this event → write nothing.\nif (!isTerminalSuccess && !isCreditEvent) {\n  return [];\n}\n\nconst now = new Date().toISOString();\n\n// Preserve whichever timestamp this event does NOT touch.\nconst lastCreditEventAt = isCreditEvent ? now : (existing.last_credit_event_at || '');\nconst lastCreditWorkflow = isCreditEvent ? inp.workflow : (existing.last_credit_workflow || '');\nconst lastCreditRunId    = isCreditEvent ? inp.run_id   : (existing.last_credit_run_id || '');\nconst lastSuccessAt      = isTerminalSuccess ? now : (existing.last_success_at || '');\n\n// PRESERVE credit_resolved_at — written ONLY by the dashboard confirm button.\n// This node must never blank it, or the next credit/success event would silently\n// un-stick the user's \"I've topped up\" confirmation and re-show the warning.\nconst creditResolvedAt = existing.credit_resolved_at || '';\n\nreturn [{\n  json: {\n    id: 'global',\n    last_credit_event_at: lastCreditEventAt,\n    last_credit_workflow: lastCreditWorkflow,\n    last_credit_run_id: lastCreditRunId,\n    last_success_at: lastSuccessAt,\n    credit_resolved_at: creditResolvedAt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        112
+      ],
+      "id": "74c0ee62-091b-4c13-8220-816619f6925b",
+      "name": "Build Credit Row"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Set Inputs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "credit_status",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_credit_event_at",
+              "displayName": "last_credit_event_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_credit_workflow",
+              "displayName": "last_credit_workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_credit_run_id",
+              "displayName": "last_credit_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_success_at",
+              "displayName": "last_success_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        432,
+        112
+      ],
+      "id": "3dee548e-9deb-4e64-9453-7b5351a5bbb4",
+      "name": "Record Credit Status",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Credit Error Row — Run State Recorder\n// Appends a run_errors row when this terminal event carried a credit failure.\n// run_errors is the append-only failure ledger the analytics failure chart reads;\n// credit is a graceful soft-fail so the Error Trigger never fires for it — this is\n// the deliberate write that gives credit failures a durable, countable home.\n// Emits nothing unless credit_event is true (so non-credit runs add no row).\n\nconst inp = $('Set Inputs').first().json;\n\nif (inp.credit_event !== true) {\n  return [];\n}\n\n// Map the internal workflow key to the display name used in run_errors.workflow_name\n// (matches the Error Trigger's prefixMap convention).\nconst workflowDisplay = {\n  discovery: 'Job Discovery',\n  application: 'Application Orchestrator',\n  refinement: 'Application Refinement',\n  cover_letter: 'Cover Letter Generation & Refinement'\n}[inp.workflow] || inp.workflow;\n\nreturn [{\n  json: {\n    run_id: inp.run_id,\n    failed_at: new Date().toISOString(),\n    workflow_name: workflowDisplay,\n    workflow_id: '',\n    execution_id: '',\n    execution_url: '',\n    last_node: '',\n    error_name: 'insufficient_credit',\n    error_message: 'LLM credit exhausted during run (graceful soft-fail; see credit_status banner)',\n    error_stack: ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        304
+      ],
+      "id": "9c808d2f-cde9-4df3-b24a-261ba4c881f6",
+      "name": "Build Credit Error Row"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Set Inputs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "run_errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        448,
+        304
+      ],
+      "id": "d418c246-6231-47f2-a1f9-234890f9ef2c",
+      "name": "Record Credit Error",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Run State": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Read Current",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Credit Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Credit Error Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Rows": {
+      "main": [
+        [
+          {
+            "node": "Record Run State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Current": {
+      "main": [
+        [
+          {
+            "node": "Build Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Credit Status": {
+      "main": [
+        [
+          {
+            "node": "Build Credit Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Credit Row": {
+      "main": [
+        [
+          {
+            "node": "Record Credit Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Credit Status": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build Credit Error Row": {
+      "main": [
+        [
+          {
+            "node": "Record Credit Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Credit Error": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "bdb09cba-126c-440e-beb7-7d0756ee9ac9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d819f81f25e576af23ba6dbf90c5d98d74dbfd9647e635669a68791df149b939"
+  },
+  "id": "SZrE9mEpEpFLly8n",
+  "tags": []
+}

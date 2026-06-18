@@ -1,0 +1,1404 @@
+{
+  "updatedAt": "2026-06-11T02:50:28.083Z",
+  "createdAt": "2026-05-22T01:23:56.904Z",
+  "id": "goYMIl7DqdNoPI5x",
+  "name": "Application Refinement",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Log Job Result â€” Refiner workflow.\n// Assembles the refinement result for: Model Usage Recorder, Resume Recorder, and the\n// webhook response. One refiner agent ran (Polisher=agent_6 for polish, Refiner=agent_9\n// for refine), plus optional verifier and the scorer. Cost computed from tokens Ã— pricing.\n\nconst safeGet = (nodeName) => {\n  try { return $(nodeName)?.first()?.json ?? null; }\n  catch (err) { console.log(`[Refiner Log] Node '${nodeName}' not found`); return null; }\n};\n\nconst req = $('Set Inputs').first().json;\nconst pricing = $('Data Loader').first().json.pricing || {};\nconst runId = $('Data Loader').first().json.run_id || '';   // refine_<execution.id>\nconst mode = req.mode;                                       // 'polish' | 'refine'\n\nconst computeCost = (sub, rates) => {\n  if (!rates || !sub) return 0;\n  return (sub.tokens?.input || 0) / 1e6 * (rates.input_per_million || 0) +\n         (sub.tokens?.output || 0) / 1e6 * (rates.output_per_million || 0) +\n         (sub.cached_input_tokens || 0) / 1e6 * (rates.cached_input_per_million || 0) +\n         (sub.cache_write_tokens || 0) / 1e6 * (rates.cache_write_per_million || 0);\n};\nconst missingPricing = new Set();\nconst costFor = (sub, agentId) => {\n  if (!sub) return 0;\n  const model = sub.model_used || '';\n  if (!model || model === 'skipped' || model === 'crash' || model === 'unknown') return 0;\n  const rates = pricing[model] || null;\n  if (!rates) { console.log(`[Refiner Log] no pricing for \"${model}\" (${agentId})`); missingPricing.add(`${agentId}:${model}`); }\n  return computeCost(sub, rates);\n};\n\n// The refiner agent that ran, by mode.\nconst refinerNode = (mode === 'polish') ? 'Resume Polisher' : 'Resume Refiner';\nconst refinerAgentId = (mode === 'polish') ? 'agent_6' : 'agent_9';\nconst refinerOut = safeGet(refinerNode);\nconst verifierOut = safeGet('Resume Verifier');   // null if verifier gate was false\nconst scorerOut = safeGet('Resume Scorer');\nconst resolved = safeGet('Resolve Resume');\n\nconst finalMarkdown = resolved?.resume_markdown || refinerOut?.resume_markdown || '';\n\nconst costRefiner = costFor(refinerOut, refinerAgentId);\nconst costVerifier = costFor(verifierOut, 'agent_3');\nconst costScorer = costFor(scorerOut, 'agent_7');\n\n// Score delta vs the parent version (parent_score sent in the request).\n// Gate on scorer success: a FAILED scorer reports overall_score:0, which is a\n// number and would otherwise compute a bogus delta (e.g. 0 - 88 = -88). Only a\n// successful score is a real score; otherwise newScore is null â†’ delta null.\nconst newScore = (scorerOut?.success === true && typeof scorerOut?.overall_score === 'number')\n  ? scorerOut.overall_score : null;\nconst parentScore = (typeof req.parent_score === 'number') ? req.parent_score : null;\nconst scoreDelta = (newScore !== null && parentScore !== null) ? (newScore - parentScore) : null;\n\n// New version number = parent + 1.\nconst newVersion = (Number(req.parent_version) || 0) + 1;\n\n// error_log: original failures only (not cascaded).\nconst errorLog = [];\nconst addErr = (id, sub) => {\n  if (sub && sub.success === false && sub.cascaded !== true) {\n    errorLog.push(`${id}:${sub.error?.category || 'unknown'}`);\n  }\n};\naddErr(refinerAgentId, refinerOut);\naddErr('agent_3', verifierOut);\naddErr('agent_7', scorerOut);\nfor (const entry of missingPricing) errorLog.push(`data_loader:missing_pricing:${entry}`);\n\nconst refinementCost = costRefiner + costVerifier + costScorer;\nconst hasFailure = [refinerOut, verifierOut, scorerOut].some(a => a && a.success === false);\n\n// Credit detection: did any sub fail specifically on insufficient_credit?\nconst hasInsufficientCredit = [refinerOut, verifierOut, scorerOut]\n  .some(a => a && a.success === false && a.cascaded !== true && a.error?.category === 'insufficient_credit');\n\nconst result = {\n  run_id: runId,\n  mode,\n  application_run_id: req.application_run_id || '',\n  job: {\n    job_id: req.job_id || '',\n    company: req.company || '',\n    title: req.title || '',\n    url: req.url || ''\n  },\n\n  // Refiner agent sub (named by mode in MUR). Carries the new resume.\n  refiner: {\n    success: refinerOut?.success || false,\n    cascaded: refinerOut?.cascaded || false,\n    resume_markdown: finalMarkdown,\n    tokens: refinerOut?.tokens || { input: 0, output: 0 },\n    cached_input_tokens: refinerOut?.cached_input_tokens || 0,\n    cache_write_tokens: refinerOut?.cache_write_tokens || 0,\n    cost: costRefiner,\n    model_used: refinerOut?.model_used || 'unknown',\n    provider_used: refinerOut?.provider_used || 'unknown',\n    error: refinerOut?.error || null\n  },\n  verifier: {\n    ran: !!verifierOut,\n    success: verifierOut?.success || false,\n    cascaded: verifierOut?.cascaded || false,\n    verdict: verifierOut?.result?.verdict || 'unknown',\n    unsupported_count: verifierOut?.result?.unsupported_count || 0,\n    issues: verifierOut?.result?.issues || [],\n    tokens: verifierOut?.tokens || { input: 0, output: 0 },\n    cached_input_tokens: verifierOut?.cached_input_tokens || 0,\n    cache_write_tokens: verifierOut?.cache_write_tokens || 0,\n    cost: costVerifier,\n    model_used: verifierOut?.model_used || 'unknown',\n    provider_used: verifierOut?.provider_used || 'unknown',\n    error: verifierOut?.error || null\n  },\n  scorer: {\n    success: scorerOut?.success || false,\n    cascaded: scorerOut?.cascaded || false,\n    overall_score: newScore,\n    recommendation: scorerOut?.recommendation || 'unknown',\n    dimensions: scorerOut?.dimensions || {},\n    strengths: scorerOut?.strengths || [],\n    gaps: scorerOut?.gaps || [],\n    rationale: scorerOut?.rationale || scorerOut?.score_rationale || '',\n    tokens: scorerOut?.tokens || { input: 0, output: 0 },\n    cached_input_tokens: scorerOut?.cached_input_tokens || 0,\n    cache_write_tokens: scorerOut?.cache_write_tokens || 0,\n    cost: costScorer,\n    model_used: scorerOut?.model_used || 'unknown',\n    provider_used: scorerOut?.provider_used || 'unknown',\n    error: scorerOut?.error || null\n  },\n\n  // resume_row: consumed by Resume Recorder to write the new resumes-tab row.\n  resume_row: {\n    version: newVersion,\n    source: (mode === 'polish') ? 'polish' : 'refinement',\n    parent_resume_id: req.parent_resume_id || '',\n    refinement_instructions: req.refinement_instructions || '',\n    score_delta: scoreDelta\n  },\n\n  refinement_cost: Number(refinementCost.toFixed(6)),\n  refinement_tokens: {\n    input: (refinerOut?.tokens?.input || 0) + (verifierOut?.tokens?.input || 0) + (scorerOut?.tokens?.input || 0),\n    output: (refinerOut?.tokens?.output || 0) + (verifierOut?.tokens?.output || 0) + (scorerOut?.tokens?.output || 0)\n  },\n  error_log: errorLog,\n  processed_status: hasInsufficientCredit ? 'insufficient_credit' : (hasFailure ? 'error' : 'done'),\n  credit_event: hasInsufficientCredit,\n  generated_at: new Date().toISOString()\n};\n\nconsole.log(`[Refiner Log] mode=${mode} run=${runId} job=${result.job.job_id} v${newVersion} score=${newScore} delta=${scoreDelta} cost=$${refinementCost.toFixed(4)} status=${result.processed_status}`);\n\nreturn [{ json: result }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        -384
+      ],
+      "id": "307042e0-ae02-4dc1-b0e5-90a006ca43bd",
+      "name": "Log Job Result"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "cpkOoZXkF0E55IYP",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/cpkOoZXkF0E55IYP",
+          "cachedResultName": "Data Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}",
+            "mode": "refinement",
+            "parent_execution_id": "={{ $execution.id }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mode",
+              "displayName": "mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_execution_id",
+              "displayName": "parent_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1296,
+        -512
+      ],
+      "id": "0d3522c2-73bd-4297-b5a4-8e42a7aa1dca",
+      "name": "Data Loader"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "KgrJxYZjAC4fxnMk",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/KgrJxYZjAC4fxnMk",
+          "cachedResultName": "Prompt Loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "root_folder_id": "={{ $json.root_folder_id }}"
+          },
+          "matchingColumns": [
+            "root_folder_id"
+          ],
+          "schema": [
+            {
+              "id": "root_folder_id",
+              "displayName": "root_folder_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1328,
+        -320
+      ],
+      "id": "7734558c-1de7-4507-bd03-47eeb3edbd8e",
+      "name": "Prompt Loader"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1024,
+        -416
+      ],
+      "id": "747060cd-269b-4260-a3f8-57118b8719a7",
+      "name": "Merge Init"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resolve Resume (Refiner): produce the refined/polished markdown as the result.\n// Two arrival paths into this node:\n//   - Verifier ran (gate true)   â†’ incoming item is Resume Verifier's output,\n//                                   which AUDITS the resume and does NOT carry\n//                                   the markdown. Must read markdown from the refiner.\n//   - Verifier skipped (gate false) â†’ incoming item is the refiner output (has markdown).\n// So we source markdown from the refiner node by mode (Polisher=polish, Refiner=refine),\n// and fall back to the incoming item only if the refiner lookup misses.\nconst item = $input.item.json;\n\n// Workflow inputs are owned by Set Inputs (the refiner webhook entry).\nconst inputs = $('Set Inputs').item.json;\n\n// The refiner that ran, by mode. This is the authoritative source of the new markdown.\nconst refinerNode = (inputs.mode === 'polish') ? 'Resume Polisher' : 'Resume Refiner';\nlet refinerMarkdown = '';\ntry {\n  refinerMarkdown = $(refinerNode).first().json.resume_markdown || '';\n} catch (err) {\n  console.log(`[Resolve Resume] refiner node '${refinerNode}' not reachable: ${err.message}`);\n}\n\nconst resumeMarkdown =\n  refinerMarkdown ||\n  item.resume_markdown ||\n  item.result?.resume_markdown ||\n  '';\n\nif (!resumeMarkdown) {\n  console.log('[Resolve Resume] WARNING: empty resume_markdown after all fallbacks.');\n}\n\nreturn {\n  json: {\n    resume_markdown: resumeMarkdown,\n    refined: true,\n    ran_verifier: inputs.run_verifier === true || String(inputs.run_verifier).toLowerCase().trim() === 'true',\n    refinement_instructions: inputs.refinement_instructions || '',\n    parent_version: inputs.parent_version || 0,\n    mode: inputs.mode || 'refine'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -384
+      ],
+      "id": "277b6e36-05ce-4a38-9520-0de8666b60d6",
+      "name": "Resolve Resume"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "9rlUL4FZMryuvHKI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/9rlUL4FZMryuvHKI",
+          "cachedResultName": "Model Usage Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $('Log Job Result').first().json }}",
+            "database_id": "={{ $('Data Loader').first().json.database_id }}"
+          },
+          "matchingColumns": [
+            "job_result"
+          ],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1264,
+        -384
+      ],
+      "id": "7ffe1da6-93d4-419d-af21-65f2828b81f8",
+      "name": "Model Usage Recorder"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "541726a1-8adb-4211-84fe-9c3092a87540",
+              "leftValue": "={{ String($('Set Inputs').first().json.run_verifier).toLowerCase().trim() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        48,
+        -400
+      ],
+      "id": "da11d6ed-fedb-41f7-a689-d6c254af323b",
+      "name": "Verifier Gate"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7000828e-f181-4331-860f-1e4b4c09339a",
+              "name": "root_folder_id",
+              "value": "={{ $env.ROOT_FOLDER_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "1c97a82e-8233-42a1-87c0-85b12bb8ae46",
+              "name": "run_started_at",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "3d48d6b5-daf0-42a4-8196-fd171870f3fb",
+              "name": "source",
+              "value": "={{ $json.body?.source || 'manual' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1552,
+        -400
+      ],
+      "id": "7b1d2a95-9926-4937-be33-7217079e1fec",
+      "name": "Root Folder"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set Inputs â€” Refiner webhook entry.\n// Parses + validates the dashboard's /refine request. Two modes:\n//   refine â†’ user instructions drive the revision (Agent 9)\n//   polish â†’ original run's critic + verifier drive it (Agent 6)\n// Provider/model/max_tokens are NOT accepted from the request â€” they are config-only\n// (config.*_refiner), resolved inside Agents 6/9. The dashboard shows them read-only.\n// The dashboard sends parent markdown + JD + (for polish) the V1 critic/verifier,\n// so the refiner needs no sheet lookups.\n\nconst body = $input.first().json.body || $input.first().json || {};\n\nconst mode = String(body.mode || 'refine').toLowerCase().trim();\n\nconst req = {\n  mode,\n  application_run_id: String(body.application_run_id || '').trim(),\n  parent_resume_id: String(body.parent_resume_id || '').trim(),\n  parent_resume_markdown: String(body.parent_resume_markdown || ''),\n  refinement_instructions: String(body.refinement_instructions || '').trim(),\n  run_verifier: body.run_verifier !== false,   // default ON\n  parent_ran_verifier: body.parent_ran_verifier === true || String(body.parent_ran_verifier).toLowerCase().trim() === 'true',\n  // Job context (sent by dashboard so no jobs-sheet read):\n  job_id: String(body.job_id || '').trim(),\n  url: String(body.url || '').trim(),\n  company: String(body.company || '').trim(),\n  title: String(body.title || '').trim(),\n  jd_text: String(body.jd_text || body.description_html || body.jd_summary || ''),\n  parent_version: Number(body.parent_version) || 0,\n  parent_score: (typeof body.parent_score === 'number') ? body.parent_score : null,\n  // Polish-only: the original run's findings, sent by the dashboard from agent_outputs.\n  critic_output: body.critic_output || null,\n  verifier_output: body.verifier_output || null\n};\n\n// Mode-aware validation â€” fail loud so the webhook returns a clear error.\nconst missing = [];\nif (!req.parent_resume_id) missing.push('parent_resume_id');\nif (!req.parent_resume_markdown) missing.push('parent_resume_markdown');\nif (!req.job_id) missing.push('job_id');\n\n// Both paths require instructions (collected in UI for polish and refine alike).\nif (!req.refinement_instructions) missing.push('refinement_instructions');\n\nif (req.mode === 'polish') {\n  // First refinement: feeds Agent 6 the ORIGINAL run's stored findings (both required).\n  if (!req.critic_output)   missing.push('critic_output (required for polish)');\n  if (!req.verifier_output) missing.push('verifier_output (required for polish)');\n} else if (req.mode === 'refine') {\n  // Subsequent: parent's verifier_output required only if the parent pass ran verifier.\n  if (req.parent_ran_verifier && !req.verifier_output) {\n    missing.push('verifier_output (required for refine when parent pass ran verifier)');\n  }\n} else {\n  throw new Error(`[Refiner Set Inputs] Unknown mode '${req.mode}' â€” expected 'refine' or 'polish'`);\n}\n\nif (missing.length) {\n  throw new Error(`[Refiner Set Inputs] Missing required field(s): ${missing.join(', ')}`);\n}\n\nconsole.log(`[Refiner Set Inputs] mode=${req.mode} job_id=${req.job_id} parent=${req.parent_resume_id} v${req.parent_version} verifier=${req.run_verifier}`);\n\nreturn [{ json: req }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        -96
+      ],
+      "id": "b1ac9f3c-acc6-4f64-8872-2cd28b89af14",
+      "name": "Set Inputs"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "i5ASqDFYp6z4mbs4",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/i5ASqDFYp6z4mbs4",
+          "cachedResultName": "Agent 3 - Resume Verifier"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "master_doc": "={{ $('Data Loader').first().json.master_doc }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "=={{ $('Prompt Loader').first().json.prompts.agent_3 }}",
+            "cascade_error": "={{ null }}",
+            "resume_markdown": "={{ $('Verifier Gate').item.json.resume_markdown }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        256,
+        -480
+      ],
+      "id": "4dc28aea-d424-4a72-89dc-168fe2528504",
+      "name": "Resume Verifier"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "jwFPPwRAjM76eZqG",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/jwFPPwRAjM76eZqG",
+          "cachedResultName": "Agent 9 - Resume Fine Refiner"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description_html": "={{ $('Set Inputs').first().json.jd_text }}",
+            "resume_markdown": "={{ $('Set Inputs').first().json.parent_resume_markdown }}",
+            "master_doc": "={{ $('Data Loader').first().json.master_doc }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_9 }}",
+            "verifier": "={{ $('Set Inputs').first().json.verifier_output }}",
+            "user_command": "={{ $('Set Inputs').first().json.refinement_instructions }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "verifier",
+              "displayName": "verifier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "user_command",
+              "displayName": "user_command",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -224,
+        -496
+      ],
+      "id": "36078e02-73f0-404f-ac7d-6c26977f4d92",
+      "name": "Resume Refiner"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "baYd2IKKbOO7WyKL",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/baYd2IKKbOO7WyKL",
+          "cachedResultName": "Agent 6 - Resume Refiner"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description_html": "={{ $('Set Inputs').first().json.jd_text }}",
+            "resume_markdown": "={{ $('Set Inputs').first().json.parent_resume_markdown }}",
+            "master_doc": "={{ $('Data Loader').first().json.master_doc }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "={{ $('Prompt Loader').first().json.prompts.agent_6 }}",
+            "critique": "={{ $('Set Inputs').first().json.critic_output }}",
+            "verifier": "={{ $('Set Inputs').first().json.verifier_output }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "master_doc",
+              "displayName": "master_doc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "verifier",
+              "displayName": "verifier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "critique",
+              "displayName": "critique",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        -256
+      ],
+      "id": "70058e69-6ccf-4083-8efb-baadd9de1b74",
+      "name": "Resume Polisher"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "B6y7tXIZ43huFXOF",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/B6y7tXIZ43huFXOF",
+          "cachedResultName": "Agent 7 - Resume Scorer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "resume_markdown": "=={{ $('Resolve Resume').first().json.resume_markdown }}",
+            "description_html": "=={{ $('Set Inputs').first().json.jd_text }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "system_prompt": "=={{ $('Prompt Loader').first().json.prompts.agent_7 }}",
+            "cascade_error": "={{ null }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description_html",
+              "displayName": "description_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "resume_markdown",
+              "displayName": "resume_markdown",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "system_prompt",
+              "displayName": "system_prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cascade_error",
+              "displayName": "cascade_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        720,
+        -384
+      ],
+      "id": "eacb756d-71b5-468e-b67b-66314ef8fe55",
+      "name": "Resume Scorer"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "699eccad-e87f-43f2-9123-bab89492ffc2",
+              "leftValue": "={{ String($('Set Inputs').first().json.mode).toLowerCase().trim()",
+              "rightValue": "refine",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        -400
+      ],
+      "id": "4bb8e906-352c-4dc8-a672-8c15c30de61a",
+      "name": "Routing"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Response â€” runs after Resume Recorder; read the refiner result from Log Job Result.\nconst jr = $('Log Job Result').first().json;\nconst scorer = jr.scorer || {};\nconst verifier = jr.verifier || {};\nconst row = jr.resume_row || {};\nconst jobId = jr.job?.job_id || '';\nconst version = Number(row.version) || 2;\n\nconst delta = (typeof row.score_delta === 'number') ? row.score_delta : 0;\nconst lowImprovement = delta < 3;\nlet improvementMessage = '';\nif (delta < 0) {\n  improvementMessage = `This version scored ${Math.abs(delta)} point(s) lower than the previous one. You may want to revert or revise your instructions.`;\n} else if (delta < 3) {\n  improvementMessage = `Only +${delta} since the previous version. Consider changing your instructions for a bigger improvement, or stop here.`;\n}\n\nconst ok = jr.processed_status === 'done';\n\nreturn [{\n  json: {\n    ok,\n    mode: jr.mode,\n    resume_id: `${jobId}_v${version}`,\n    version,\n    resume_markdown: jr.refiner?.resume_markdown || '',\n    overall_score: (typeof scorer.overall_score === 'number') ? scorer.overall_score : null,\n    score_delta: delta,\n    low_improvement: lowImprovement,\n    improvement_message: improvementMessage,\n    verifier_verdict: verifier.verdict || null,\n    unsupported_count: (typeof verifier.unsupported_count === 'number') ? verifier.unsupported_count : null,\n    critic_critical_count: null,\n    cost_usd: (typeof jr.refinement_cost === 'number') ? jr.refinement_cost : 0,\n    error: ok ? null : (jr.error_log || []).join('; ')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        -304
+      ],
+      "id": "31abe3f8-06df-4f2c-a307-aa0a279507d7",
+      "name": "Build Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, accepted: true, run_id: 'refine_' + $execution.id } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -656,
+        -400
+      ],
+      "id": "107e8e7e-771d-43b3-8392-ffc2c89db8ad",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "yNLUyYrlkEmrBY7T",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/yNLUyYrlkEmrBY7T",
+          "cachedResultName": "Resume Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_result": "={{ $('Log Job Result').first().json }}",
+            "config": "={{ $('Data Loader').first().json.config }}",
+            "database_id": "={{ $('Data Loader').first().json.database_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "job_result",
+              "displayName": "job_result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "config",
+              "displayName": "config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1296,
+        -176
+      ],
+      "id": "d27f65da-cd95-48c1-af53-62da7f283ed1",
+      "name": "Resume Recorder"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1552,
+        -304
+      ],
+      "id": "54c6d790-6dd5-49b9-9e82-38cb5e554d32",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "refine-resume",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1824,
+        -400
+      ],
+      "id": "a54bed13-70cc-4fb7-a075-c487ae772a15",
+      "name": "Refiner Webhook",
+      "webhookId": "7e109a03-3639-43c2-baca-72be580f1307",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "E3u4yJkiBm3tomJn",
+          "name": "Maestro Webhook Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "workflow": "refinement",
+            "status": "running",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "={{ $('Root Folder').first().json.source }}",
+            "started_at": "={{ $('Root Folder').first().json.run_started_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -832,
+        -400
+      ],
+      "id": "d49606c5-7bf0-4f52-b710-9770a556d662",
+      "name": "Mark Running"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SZrE9mEpEpFLly8n",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SZrE9mEpEpFLly8n",
+          "cachedResultName": "Run State Recorder"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "database_id": "={{ $('Data Loader').first().json.database_id }}",
+            "workflow": "refinement",
+            "status": "complete",
+            "run_id": "={{ $('Data Loader').first().json.run_id }}",
+            "source": "=",
+            "started_at": "=",
+            "jobs_returned": "=",
+            "completed_at": "={{ new Date().toISOString() }}",
+            "credit_event": "={{ String($('Log Job Result').first().json.credit_event === true) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "completed_at",
+              "displayName": "completed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jobs_returned",
+              "displayName": "jobs_returned",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "database_id",
+              "displayName": "database_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "credit_event",
+              "displayName": "credit_event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1920,
+        -304
+      ],
+      "id": "3c2524d4-a91f-4c89-aeb5-e61d1b890293",
+      "name": "Mark Complete"
+    }
+  ],
+  "connections": {
+    "Log Job Result": {
+      "main": [
+        [
+          {
+            "node": "Model Usage Recorder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Resume Recorder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Loader": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Init": {
+      "main": [
+        [
+          {
+            "node": "Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Resume": {
+      "main": [
+        [
+          {
+            "node": "Resume Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifier Gate": {
+      "main": [
+        [
+          {
+            "node": "Resume Verifier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Root Folder": {
+      "main": [
+        [
+          {
+            "node": "Prompt Loader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Data Loader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Inputs": {
+      "main": [
+        [
+          {
+            "node": "Merge Init",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Resume Verifier": {
+      "main": [
+        [
+          {
+            "node": "Resolve Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Refiner": {
+      "main": [
+        [
+          {
+            "node": "Verifier Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Scorer": {
+      "main": [
+        [
+          {
+            "node": "Log Job Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Routing": {
+      "main": [
+        [
+          {
+            "node": "Resume Refiner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resume Polisher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Polisher": {
+      "main": [
+        [
+          {
+            "node": "Verifier Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Mark Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model Usage Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Recorder": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Webhook": {
+      "main": [
+        [
+          {
+            "node": "Set Inputs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Routing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "4bjXMpGcylUjxKXK",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": [
+        18
+      ]
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "7d2d4540-c125-41fa-8d79-8eaab329c407",
+  "activeVersionId": "7d2d4540-c125-41fa-8d79-8eaab329c407",
+  "versionCounter": 424,
+  "triggerCount": 1,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-22T01:23:56.907Z",
+      "createdAt": "2026-05-22T01:23:56.907Z",
+      "role": "workflow:owner",
+      "workflowId": "goYMIl7DqdNoPI5x",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 7d2d4540",
+    "description": ""
+  }
+}

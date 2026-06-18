@@ -1,0 +1,28 @@
+# Secrets — NEVER commit these
+.env
+.env.local
+*.env
+service-account*.json
+*-credentials.json
+google-credentials*.json
+
+# Keep the template (negate the *.env rule above)
+!.env.example
+
+# n8n raw exports (scratch)
+maestro-export/
+workflows-clean/
+
+# MkDocs build output
+site/
+_site/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*

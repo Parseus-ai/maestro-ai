@@ -1,0 +1,318 @@
+{
+  "updatedAt": "2026-05-22T19:21:00.604Z",
+  "createdAt": "2026-05-14T00:17:48.732Z",
+  "id": "KgrJxYZjAC4fxnMk",
+  "name": "Prompt Loader",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "root_folder_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1088,
+        16
+      ],
+      "id": "f4b6d30d-17f5-4f0e-896f-287c6a3dc15c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Bundle Output â€” assemble final shape.\n// Reads parse prompts (override||default) and config from named upstream nodes,\n// substitutes {placeholders}, packages by agent. Output contract unchanged:\n//   { prompts: { agent_1..agent_9 }, prompt_warnings, config }\nconst promptItems = $('Parse Prompts').all();\nconst configItem = $('Parse Config').first();\nconst config = (configItem && configItem.json && configItem.json.config) || {};\nconst prompts = {};\nconst prompt_warnings = [];\nfor (const item of promptItems) {\n  const { agent_id, text, warnings } = item.json;\n  if (warnings && warnings.length > 0) {\n    prompt_warnings.push(...warnings);\n  }\n  if (agent_id === null || agent_id === undefined || agent_id === '') continue;\n  // Substitute {config_key} placeholders\n  const body = String(text || '').replace(/\\{([a-z_][a-z_0-9]*)\\}/gi, (full, key) => {\n    if (config[key] !== undefined && config[key] !== null && config[key] !== '') {\n      return String(config[key]);\n    }\n    prompt_warnings.push({\n      agent: agent_id,\n      issue: `Unresolved placeholder: {${key}}`\n    });\n    return full;\n  });\n  prompts[agent_id] = body;\n}\nconsole.log(`[Prompt Loader] Loaded ${Object.keys(prompts).length} prompts`);\nconsole.log(`[Prompt Loader] Config keys: ${Object.keys(config).length}`);\nconsole.log(`[Prompt Loader] Warnings: ${prompt_warnings.length}`);\nreturn [{ json: { prompts, prompt_warnings } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        16
+      ],
+      "id": "9577a760-666b-425d-998b-968e9a571c7f",
+      "name": "Bundle Output"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "={{ \"'\" + $json.root_folder_id + \"' in parents and trashed = false\" }}",
+        "returnAll": true,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -880,
+        16
+      ],
+      "id": "c372e62a-1b24-491a-86a2-6af23ec39c45",
+      "name": "List Root Folder",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "aWfDrdPk2prSZ9pg",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prompt Loader â€” find Database workbook in root folder\n// (Agent Prompts folder no longer needed; prompts now live in the `prompts` sheet tab.)\n\nconst items = $input.all().map(i => i.json);\n\nconst findOne = (name) => {\n  const matches = items.filter(i => i.name === name);\n  if (matches.length === 0) {\n    const available = items.length\n      ? items.map(i => `  - \"${i.name}\"`).join('\\n')\n      : '  (folder is empty)';\n    throw new Error(\n      `[Prompt Loader] Could not find \"${name}\" in root folder.\\n` +\n      `Available items:\\n${available}`\n    );\n  }\n  if (matches.length > 1) {\n    throw new Error(`[Prompt Loader] Multiple items named \"${name}\" found. Names must be unique.`);\n  }\n  return matches[0].id;\n};\n\nconst database_id = findOne('Database');\n\nconsole.log(`[Prompt Loader] Resolved database_id: ${database_id}`);\n\nreturn [{ json: { database_id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        16
+      ],
+      "id": "0413ef2d-05f2-4305-9df8-94d6aa839901",
+      "name": "Resolve IDs"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve IDs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -464,
+        -80
+      ],
+      "id": "60aa7d80-3be1-49da-8568-0c3f8aac6cb0",
+      "name": "Read Config",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        48,
+        16
+      ],
+      "id": "4447ae1e-5ebd-4328-9574-9d5fed4095b0",
+      "name": "Merge Sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Config â€” build clean config object from sheet rows\nconst stripEquals = (val) => {\n  if (typeof val !== 'string') return val;\n  return val.startsWith('=') ? val.substring(1) : val;\n};\nconst items = $input.all();\nconst config = {};\nfor (const item of items) {\n  const j = item.json;\n  const param = (j.parameter ?? j.Parameter ?? '').toString().trim();\n  let value = j.value !== undefined ? j.value : j.Value;\n  value = stripEquals(value);\n  if (param) config[param] = value;\n}\nconsole.log(`[Parse Config] Loaded ${Object.keys(config).length} config keys`);\nreturn [{ json: { config } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -80
+      ],
+      "id": "8ebc738e-00ad-4815-a04a-c46bcad83349",
+      "name": "Parse Config"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resolve Prompts â€” read the `prompts` tab rows, pick override || default per agent.\n// Emits one item per agent: { agent_id, text, source } where source = 'override' | 'default'.\n// Reset = clearing override_markdown in the sheet (handled by the frontend), so blank/whitespace override falls back to default.\n\nconst stripEquals = (val) => {\n  if (typeof val !== 'string') return val;\n  return val.startsWith('=') ? val.substring(1) : val;\n};\n\nconst items = $input.all();\nconst results = [];\nconst warnings = [];\n\nfor (const item of items) {\n  const j = item.json;\n  const agent_id = (j.agent_id ?? j.Agent_id ?? '').toString().trim();\n  if (!agent_id) {\n    warnings.push({ issue: 'Row with blank agent_id skipped' });\n    continue;\n  }\n\n  const def = stripEquals(j.default_markdown ?? j.Default_markdown ?? '') || '';\n  const ovrRaw = stripEquals(j.override_markdown ?? j.Override_markdown ?? '') || '';\n  const ovr = typeof ovrRaw === 'string' ? ovrRaw : String(ovrRaw);\n\n  const useOverride = ovr.trim().length > 0;\n  const text = useOverride ? ovr : def;\n  const source = useOverride ? 'override' : 'default';\n\n  if (!text || !text.trim()) {\n    warnings.push({ agent: agent_id, issue: 'Empty prompt (no override and no default)' });\n  }\n\n  results.push({ json: { agent_id, text, source, warnings: [] } });\n}\n\n// attach accumulated warnings to the first item so Bundle Output can surface them\nif (results.length > 0) {\n  results[0].json.warnings = warnings;\n} else {\n  results.push({ json: { agent_id: null, text: '', source: 'none', warnings } });\n}\n\nconsole.log(`[Parse Prompts] ${results.length} prompt row(s); ` +\n  results.map(r => `${r.json.agent_id}=${r.json.source}`).join(', '));\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        112
+      ],
+      "id": "47bde491-a72b-4888-8ece-1602dfbe7cd2",
+      "name": "Parse Prompts"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Resolve IDs').first().json.database_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "prompts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -464,
+        112
+      ],
+      "id": "f47e7221-c615-4ba9-b6f3-b498abe7061d",
+      "name": "Read Prompts",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleApi": {
+          "id": "pMz1vooaD0DQYUHW",
+          "name": "Google Service Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "List Root Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Root Folder": {
+      "main": [
+        [
+          {
+            "node": "Resolve IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve IDs": {
+      "main": [
+        [
+          {
+            "node": "Read Config",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Config": {
+      "main": [
+        [
+          {
+            "node": "Parse Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Sync": {
+      "main": [
+        [
+          {
+            "node": "Bundle Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Prompts": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Prompts": {
+      "main": [
+        [
+          {
+            "node": "Parse Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "56ec2606-8c9d-4cac-9f7a-c90224777498",
+  "activeVersionId": "56ec2606-8c9d-4cac-9f7a-c90224777498",
+  "versionCounter": 167,
+  "triggerCount": 0,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-05-14T00:17:48.734Z",
+      "createdAt": "2026-05-14T00:17:48.734Z",
+      "role": "workflow:owner",
+      "workflowId": "KgrJxYZjAC4fxnMk",
+      "projectId": "kZS932EjZfpXmb7H",
+      "project": {
+        "updatedAt": "2026-05-06T02:54:00.051Z",
+        "createdAt": "2026-05-06T02:52:14.918Z",
+        "id": "kZS932EjZfpXmb7H",
+        "name": "Maestro AI",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "e4ae7d04-ed18-4bb8-a6ad-b4b4dcae93ec"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 56ec2606",
+    "description": ""
+  }
+}
