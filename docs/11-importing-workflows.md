@@ -64,6 +64,46 @@ docker compose up -d
 docker compose restart n8n
 ```
 
+## Manual import (if the automatic importer fails)
+
+The stack imports and publishes the workflows automatically. If that does not happen, the dashboard reports missing workflows, or webhook calls return 404, import them by hand.
+
+First, check whether the importer ran:
+
+```bash
+docker compose logs n8n-importer
+```
+
+If the importer errored or the log is empty, import the workflows manually. They ship in `workflows/`, grouped by type. Import them in dependency order so the Execute Workflow references resolve:
+
+```bash
+docker compose exec n8n n8n import:workflow --separate --input=/workflows/shared
+docker compose exec n8n n8n import:workflow --separate --input=/workflows/sources
+docker compose exec n8n n8n import:workflow --separate --input=/workflows/recorders
+docker compose exec n8n n8n import:workflow --separate --input=/workflows/agents
+docker compose exec n8n n8n import:workflow --separate --input=/workflows/entry
+```
+
+`--separate` preserves each workflow's ID, so the references between them resolve automatically.
+
+Imported workflows are inactive. Publish the four entry workflows so their webhooks register:
+
+```bash
+docker compose exec n8n n8n publish:workflow --id=<id>
+```
+
+Publish Application Orchestrator, Application Refinement, Cover Letter Generation & Refinement, and Job Discovery. Each workflow's ID is in the `id` field of the files in `workflows/entry/`, or in the n8n editor's Workflows view.
+
+Then restart n8n so the webhooks register:
+
+```bash
+docker compose restart n8n
+```
+
+After the restart, the dashboard's build, refine, and discovery actions reach the backend.
+
+You can also import each file through the editor: open n8n, **Workflows → Import from File**, and select each JSON in `workflows/`. Then publish the four entry workflows and restart n8n as above.
+
 ---
 
 [← Master Career Dossier](10-master-dossier.md) · [Home →](index.md)
