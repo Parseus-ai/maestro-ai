@@ -92,7 +92,18 @@
 }
 .md-typeset h1 .brand-byline a {
   color: var(--md-primary-fg-color);   /* only "Parseus AI" is Persian blue */
-  text-decoration: none;
+  /* Link affordance: a subtle underline at rest so the wordmark doesn't read
+     as plain brand-colored text (color alone fails WCAG 1.4.1). The trailing
+     ↗ external-link arrow is supplied by the shared rule in section 9. */
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  text-decoration-color: color-mix(in srgb, var(--md-primary-fg-color) 45%, transparent);
+  transition: text-decoration-color 0.15s ease, text-decoration-thickness 0.15s ease;
+}
+.md-typeset h1 .brand-byline a:hover {
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--md-primary-fg-color);   /* full-opacity on hover */
 }
 
 /* ============================================================
@@ -116,4 +127,50 @@
   border-radius: 6px;
   padding: 8px;
   background: #FFFFFF;
+}
+
+/* ============================================================
+   9. Link affordance — a link must be recognizable as a link by
+   more than color. Persian blue is a brand color used across the
+   page, so color alone fails WCAG 1.4.1. Every rendered-content
+   link therefore gets a subtle underline at rest that strengthens
+   on hover; external links additionally get a trailing ↗, while
+   internal doc-to-doc links do NOT (the arrow means "leaves the
+   site"). Scoped to .md-typeset so theme chrome (nav, tabs,
+   footer) is untouched; permalink (¶) anchors are excluded.
+   ============================================================ */
+.md-typeset a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  transition: text-decoration-color 0.15s ease, text-decoration-thickness 0.15s ease;
+}
+.md-typeset a:hover {
+  text-decoration-thickness: 2px;
+  text-decoration-color: currentColor;   /* full-opacity, clearer on hover */
+}
+
+/* Permalink (¶) heading anchors are icon affordances, not prose
+   links — keep them undecorated and arrow-free. */
+.md-typeset a.headerlink,
+.md-typeset a.headerlink:hover {
+  text-decoration: none;
+}
+.md-typeset a.headerlink::after {
+  content: none;
+}
+
+/* External links (absolute http/https) get a trailing ↗ in Persian
+   blue, sized to the link text. Relative internal links never match
+   this selector, so they stay arrow-free. inline-block detaches the
+   arrow from the link's underline so the glyph itself isn't underlined. */
+.md-typeset a[href^="http://"]::after,
+.md-typeset a[href^="https://"]::after {
+  content: "↗";
+  display: inline-block;
+  margin-left: 0.15em;
+  font-size: 0.85em;
+  line-height: 1;
+  color: var(--md-primary-fg-color);
 }
