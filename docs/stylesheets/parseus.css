@@ -183,9 +183,13 @@
 
 /* The top H1 carries the "A product of Parseus AI" byline. Its ¶ permalink is
    suppressed entirely — it must never render, at rest OR on hover — so the
-   title/byline reads cleanly with no stray pilcrow. */
-.md-typeset h1 .headerlink {
-  display: none;
+   title/byline reads cleanly with no stray pilcrow. !important beats Material's
+   own headerlink rules, and we target both the nested and direct-child forms. */
+.md-typeset h1 .headerlink,
+.md-typeset h1 > .headerlink,
+.md-typeset h1 a.headerlink,
+.md-typeset h1:hover .headerlink {
+  display: none !important;
 }
 
 /* External links (absolute http/https) get a trailing external-link icon —
@@ -198,14 +202,14 @@
    icon from the link's underline so it isn't underlined. */
 .md-typeset a[href^="http://"]::after,
 .md-typeset a[href^="https://"]::after {
-  --ext-link-icon: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M15%203h6v6'/%3E%3Cpath%20d='M10%2014%2021%203'/%3E%3Cpath%20d='M18%2013v6a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2V5a2%202%200%200%201%202-2h6'/%3E%3C/svg%3E");
+  --ext-link-icon: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>');
   content: "";
   display: inline-block;
-  width: 13px;
-  height: 13px;
-  margin-left: 4px;
-  vertical-align: -2px;            /* vertically centered with the text */
-  background-color: #94A3B8;       /* slate-400 — muted gray, not brand blue */
+  width: 0.78em;
+  height: 0.78em;
+  margin-left: 3px;
+  vertical-align: -0.05em;          /* vertically centered with the text */
+  background-color: #94A3B8;        /* slate-400 — muted gray, not brand blue */
   -webkit-mask: var(--ext-link-icon) no-repeat center / contain;
   mask: var(--ext-link-icon) no-repeat center / contain;
 }
