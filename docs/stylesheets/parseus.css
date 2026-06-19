@@ -93,12 +93,12 @@
 .md-typeset h1 .brand-byline a {
   color: var(--md-primary-fg-color);   /* only "Parseus AI" is Persian blue */
   /* Link affordance: a subtle underline at rest so the wordmark doesn't read
-     as plain brand-colored text (color alone fails WCAG 1.4.1). The trailing
-     ↗ external-link arrow is supplied by the shared rule in section 9. */
+     as plain brand-colored text (color alone fails WCAG 1.4.1). The gray
+     external-link icon is supplied by the shared rule in section 9. */
   text-decoration: underline;
   text-decoration-thickness: 1px;
-  text-underline-offset: 0.15em;
-  text-decoration-color: color-mix(in srgb, var(--md-primary-fg-color) 45%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--md-primary-fg-color) 40%, transparent);
   transition: text-decoration-color 0.15s ease, text-decoration-thickness 0.15s ease;
 }
 .md-typeset h1 .brand-byline a:hover {
@@ -134,16 +134,16 @@
    more than color. Persian blue is a brand color used across the
    page, so color alone fails WCAG 1.4.1. Every rendered-content
    link therefore gets a subtle underline at rest that strengthens
-   on hover; external links additionally get a trailing ↗, while
-   internal doc-to-doc links do NOT (the arrow means "leaves the
-   site"). Scoped to .md-typeset so theme chrome (nav, tabs,
-   footer) is untouched; permalink (¶) anchors are excluded.
+   on hover; external links additionally get a trailing external-link
+   icon, while internal doc-to-doc links do NOT (the icon means
+   "leaves the site"). Scoped to .md-typeset so theme chrome (nav,
+   tabs, footer) is untouched; permalink (¶) anchors are excluded.
    ============================================================ */
 .md-typeset a {
   text-decoration: underline;
   text-decoration-thickness: 1px;
-  text-underline-offset: 0.15em;
-  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   transition: text-decoration-color 0.15s ease, text-decoration-thickness 0.15s ease;
 }
 .md-typeset a:hover {
@@ -161,38 +161,51 @@
   content: none;
 }
 
-/* Standard mkdocs convention: the ¶ permalink is hidden at rest and
-   appears only when its heading is hovered (or the anchor is focused for
-   keyboard users). Without this it sits permanently next to the title —
-   including beside the "A product of Parseus AI" byline — reading as a
-   stray pilcrow. */
+/* Standard mkdocs convention for body headings (h2–h6): the ¶ permalink is
+   hidden at rest and appears only when its heading is hovered (or the anchor
+   is focused for keyboard users). */
 .md-typeset .headerlink {
   opacity: 0;
   transition: opacity 0.15s ease;
 }
-.md-typeset h1:hover .headerlink,
 .md-typeset h2:hover .headerlink,
 .md-typeset h3:hover .headerlink,
 .md-typeset h4:hover .headerlink,
 .md-typeset h5:hover .headerlink,
 .md-typeset h6:hover .headerlink,
-.md-typeset .headerlink:focus {
+.md-typeset h2 .headerlink:focus,
+.md-typeset h3 .headerlink:focus,
+.md-typeset h4 .headerlink:focus,
+.md-typeset h5 .headerlink:focus,
+.md-typeset h6 .headerlink:focus {
   opacity: 1;
 }
 
-/* External links (absolute http/https) get a trailing ↗, sized to the
-   link text. Relative internal links never match this selector, so they
-   stay arrow-free. inline-block detaches the arrow from the link's
-   underline so the glyph itself isn't underlined. The arrow is a neutral
-   functional indicator, NOT brand-colored — it uses the default text
-   foreground (near-black in light mode, light in the slate scheme) so it
-   stays legible in both themes and doesn't clash with the blue wordmark. */
+/* The top H1 carries the "A product of Parseus AI" byline. Its ¶ permalink is
+   suppressed entirely — it must never render, at rest OR on hover — so the
+   title/byline reads cleanly with no stray pilcrow. */
+.md-typeset h1 .headerlink {
+  display: none;
+}
+
+/* External links (absolute http/https) get a trailing external-link icon —
+   a proper box-with-arrow glyph (Lucide "external-link"), NOT the raw ↗
+   unicode character (which renders inconsistently across fonts). It is drawn
+   via a CSS mask so its color is set by `background-color` (independent of the
+   SVG), letting it stay a muted slate-400 gray — a neutral functional
+   indicator, not part of the blue wordmark. Relative internal links never
+   match this selector, so they stay icon-free. inline-block detaches the
+   icon from the link's underline so it isn't underlined. */
 .md-typeset a[href^="http://"]::after,
 .md-typeset a[href^="https://"]::after {
-  content: "↗";
+  --ext-link-icon: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M15%203h6v6'/%3E%3Cpath%20d='M10%2014%2021%203'/%3E%3Cpath%20d='M18%2013v6a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2V5a2%202%200%200%201%202-2h6'/%3E%3C/svg%3E");
+  content: "";
   display: inline-block;
-  margin-left: 0.15em;
-  font-size: 0.85em;
-  line-height: 1;
-  color: var(--md-default-fg-color);
+  width: 13px;
+  height: 13px;
+  margin-left: 4px;
+  vertical-align: -2px;            /* vertically centered with the text */
+  background-color: #94A3B8;       /* slate-400 — muted gray, not brand blue */
+  -webkit-mask: var(--ext-link-icon) no-repeat center / contain;
+  mask: var(--ext-link-icon) no-repeat center / contain;
 }
